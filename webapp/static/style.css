@@ -1,0 +1,129 @@
+/* 企业网络智能运维诊断系统 - 基础样式 */
+* { box-sizing: border-box; }
+body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    margin: 0;
+    background: #f4f6f8;
+    color: #1f2d3d;
+}
+header.topbar {
+    background: #1f2d3d;
+    color: #fff;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+header.topbar a {
+    color: #fff;
+    text-decoration: none;
+    margin-left: 18px;
+    font-size: 14px;
+}
+header.topbar a:hover { text-decoration: underline; }
+header.topbar h1 { font-size: 18px; margin: 0; }
+
+main {
+    max-width: 1160px;
+    margin: 20px auto;
+    padding: 0 20px 40px;
+}
+
+.card {
+    background: #fff;
+    border: 1px solid #e1e5ea;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+table th, table td {
+    border-bottom: 1px solid #e8eaed;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+table th { background: #f0f2f5; font-weight: 600; }
+
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.badge-success { background: #e3f7e8; color: #1a7f37; }
+.badge-failed { background: #fde8e8; color: #c22; }
+.badge-no_data { background: #eee; color: #777; }
+.badge-stale { background: #fff3cd; color: #9a6700; }
+
+.btn {
+    display: inline-block;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 4px;
+    background: #2b6cb0;
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+}
+.btn:hover { background: #1d4e89; }
+.btn-secondary { background: #718096; }
+.btn-secondary:hover { background: #4a5568; }
+.btn-danger { background: #c53030; }
+.btn-danger:hover { background: #9b2c2c; }
+
+textarea, input[type=text] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.flex-row { display: flex; gap: 10px; align-items: center; }
+.flex-row > * { flex: none; }
+.flex-grow { flex: 1; }
+
+.section-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 18px 0 8px;
+    border-left: 4px solid #2b6cb0;
+    padding-left: 8px;
+}
+
+.muted { color: #718096; font-size: 12px; }
+.kb-doc {
+    border: 1px solid #e1e5ea;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background: #fafbfc;
+}
+.kb-doc .kb-meta { font-size: 12px; color: #718096; }
+
+pre.raw-output {
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 12px;
+    max-height: 300px;
+}
+
+.history-item {
+    border-bottom: 1px solid #e8eaed;
+    padding: 8px 0;
+    cursor: pointer;
+}
+.history-item:hover { background: #f7f9fb; }
+
+.confidence { font-size: 12px; color: #2b6cb0; }

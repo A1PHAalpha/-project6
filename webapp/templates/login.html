@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>登录 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+</header>
+<main>
+    <div class="section-title">访问口令</div>
+    <div class="card">
+        <p class="muted">请输入访问口令（对应环境变量 APP_API_TOKEN）</p>
+        <input type="password" id="token" placeholder="访问口令"
+               style="width:100%;box-sizing:border-box;padding:8px;margin-top:8px;">
+        <div class="flex-row" style="margin-top:10px;">
+            <button class="btn" onclick="doLogin()">登录</button>
+            <span id="err" class="muted" style="color:#c22;"></span>
+        </div>
+    </div>
+</main>
+
+<script>
+async function doLogin() {
+    const token = document.getElementById('token').value.trim();
+    const err = document.getElementById('err');
+    if (!token) { err.textContent = '请输入口令'; return; }
+    try {
+        const resp = await fetch('/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: token})
+        });
+        if (resp.ok) {
+            window.location.href = '/';
+        } else {
+            err.textContent = '口令错误';
+        }
+    } catch (e) {
+        err.textContent = '请求失败: ' + e;
+    }
+}
+document.getElementById('token').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') doLogin();
+});
+</script>
+</body>
+</html>

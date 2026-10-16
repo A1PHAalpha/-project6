@@ -1,0 +1,15 @@
+# 运行环境：Web 服务 + RAG 查询 + 控制层
+fastapi==0.111.0
+uvicorn==0.30.1
+jinja2==3.1.4
+pydantic==2.7.4
+openai==1.35.0
+# 固定 <0.28：httpx 0.28 移除了 Client(proxies=...) 参数，openai 1.35 会因此报错。
+httpx==0.27.2
+python-dotenv==1.0.1
+netmiko==4.3.0
+# 固定 <4：paramiko 4.0+ 移除了 SHA-1 KEX（group14-sha1 / group-exchange-sha1），
+# 会导致老 Cisco IOSv 设备（仅提供 SHA-1 算法）SSH 协商失败。
+paramiko==3.5.1
+chromadb==1.5.9
+fastembed==0.9.0

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>故障诊断 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">提交故障诊断问题</div>
+    <div class="card">
+        <div class="flex-row" style="margin-bottom:10px;">
+            <label><input type="checkbox" id="useKb" checked> 启用知识库检索（RAG）</label>
+        </div>
+        <textarea id="question" rows="3" placeholder="例如：分支机构A的PC无法访问总部服务器，请诊断原因"></textarea>
+        <div class="flex-row" style="margin-top:10px;">
+            <button class="btn" onclick="submitDiagnose()">提交诊断</button>
+            <span id="loadingTip" class="muted" style="display:none;">正在调用模型诊断，请稍候...</span>
+        </div>
+    </div>
+
+    <div id="resultArea"></div>
+
+    <div class="section-title">历史诊断记录</div>
+    <div class="card">
+        {% if not history %}
+        <p class="muted">暂无历史诊断记录。</p>
+        {% endif %}
+        {% for h in history %}
+        <div class="history-item" onclick="loadDiagnosis({{ h.id }})">
+            <strong>#{{ h.id }}</strong>
+            <span>{{ h.question[:60] }}</span>
+            <span class="muted">| 模型: {{ h.model_id }} | 知识库: {{ '启用' if h.use_kb else '未启用' }} | 耗时: {{ h.response_time_ms }}ms | {{ h.created_at }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</main>
+
+<script>
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function submitDiagnose() {
+    const question = document.getElementById('question').value.trim();
+    if (!question) { alert('请输入问题'); return; }
+    const useKb = document.getElementById('useKb').checked;
+    document.getElementById('loadingTip').style.display = 'inline';
+    document.getElementById('resultArea').innerHTML = '';
+    try {
+        const resp = await fetch('/api/diagnose', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({question: question, use_kb: useKb})
+        });
+        const data = await resp.json();
+        renderResult(data, []);
+    } catch (e) {
+        document.getElementById('resultArea').innerHTML = '<div class="card">请求失败: ' + escapeHtml(e) + '</div>';
+    } finally {
+        document.getElementById('loadingTip').style.display = 'none';
+    }
+}
+
+async function loadDiagnosis(id) {
+    const resp = await fetch('/api/diagnosis/' + id);
+    const data = await resp.json();
+    if (data.error) { alert(data.error); return; }
+    const rec = data.diagnosis;
+    const result = {
+        diagnosis_id: rec.id,
+        question: rec.question,
+        model_id: rec.model_id,
+        prompt_template_id: rec.prompt_template_id,
+        use_kb: !!rec.use_kb,
+        response_time_ms: rec.response_time_ms,
+        evidence: JSON.parse(rec.evidence_json || '[]'),
+        retrieved_docs_ids: JSON.parse(rec.retrieved_doc_ids_json || '[]'),
+        answer: JSON.parse(rec.answer_json || '{}'),
+        error: null
+    };
+    renderResult(result, data.manual_actions || []);
+    window.scrollTo({top: document.getElementById('resultArea').offsetTop, behavior: 'smooth'});
+}
+
+function renderResult(data, manualActions) {
+    const a = data.answer || {};
+    let html = '<div class="section-title">诊断结果 #' + data.diagnosis_id + '</div>';
+    html += '<div class="card">';
+    html += '<p class="muted">模型: ' + escapeHtml(data.model_id) + ' | Prompt模板: ' + escapeHtml(data.prompt_template_id) +
+            ' | 知识库检索: ' + (data.use_kb ? '启用' : '未启用') + ' | 响应耗时: ' + data.response_time_ms + 'ms</p>';
+    if (data.error) {
+        html += '<p style="color:#c22;">调用出错: ' + escapeHtml(data.error) + '</p>';
+    }
+
+    html += '<p><strong>故障现象：</strong>' + escapeHtml(a.fault_phenomenon) + '</p>';
+
+    html += '<p><strong>证据引用：</strong></p><ul>';
+    (a.evidence_used || []).forEach(function(e) {
+        html += '<li>[' + escapeHtml(e.device_name) + ' @ ' + escapeHtml(e.collected_at) + '] ' + escapeHtml(e.finding) + '</li>';
+    });
+    html += '</ul>';
+
+    html += '<p><strong>可能原因：</strong></p><ul>';
+    (a.possible_causes || []).forEach(function(c) {
+        html += '<li>' + escapeHtml(c.cause) + ' <span class="confidence">(置信度: ' + escapeHtml(c.confidence) +
+                ', 依据: ' + (c.kb_refs || []).join(', ') + ')</span></li>';
+    });
+    html += '</ul>';
+
+    html += '<p><strong>检查步骤：</strong></p><ol>';
+    (a.check_steps || []).forEach(function(s) { html += '<li>' + escapeHtml(s) + '</li>'; });
+    html += '</ol>';
+
+    html += '<p><strong>处理建议：</strong></p><ul>';
+    (a.fix_suggestions || []).forEach(function(s, idx) {
+        html += '<li>' + escapeHtml(s.action) +
+                (s.requires_manual_confirmation ? ' <span class="badge badge-stale">需人工确认</span>' : '') +
+                ' <span class="confidence">(依据: ' + (s.kb_refs || []).join(', ') + ')</span>' +
+                ' <button class="btn btn-secondary" style="margin-left:6px;" onclick="openConfirmForm(' + data.diagnosis_id + ', ' + idx + ')">人工确认并备份</button>' +
+                '</li>';
+        html += '<div id="confirmForm_' + data.diagnosis_id + '_' + idx + '" style="display:none;margin:6px 0;padding:8px;background:#f7f9fb;border-radius:4px;">' +
+                '<input type="text" id="deviceName_' + idx + '" placeholder="设备名称 (如 BR-A-SW2)" style="margin-bottom:4px;">' +
+                '<input type="text" id="operator_' + idx + '" placeholder="操作人姓名" style="margin-bottom:4px;">' +
+                '<input type="text" id="actionDesc_' + idx + '" value="' + escapeHtml(s.action) + '" style="margin-bottom:4px;">' +
+                '<button class="btn" onclick="confirmAction(' + data.diagnosis_id + ', ' + idx + ')">确认备份并记录</button> ' +
+                '<button class="btn btn-danger" onclick="rejectAction(' + data.diagnosis_id + ', ' + idx + ')">驳回建议</button>' +
+                '</div>';
+    });
+    html += '</ul>';
+
+    html += '<p><strong>复测方法：</strong>' + escapeHtml(a.recheck_method) + '</p>';
+    html += '<p><strong>信息缺失说明：</strong>' + escapeHtml(a.missing_information) + '</p>';
+
+    html += '<div class="flex-row">';
+    html += '<a class="btn" href="/api/export/' + data.diagnosis_id + '" target="_blank">导出报告</a>';
+    html += '</div>';
+    html += '</div>';
+
+    if (data.retrieved_docs && data.retrieved_docs.length) {
+        html += '<div class="section-title">知识库检索依据</div><div class="card">';
+        data.retrieved_docs.forEach(function(doc) {
+            html += '<div class="kb-doc"><strong>[' + escapeHtml(doc.id) + '] ' + escapeHtml(doc.title) + '</strong>' +
+                    '<div class="kb-meta">适用设备: ' + escapeHtml(doc.applicable_device) + ' | 来源: ' + escapeHtml(doc.source) + '</div>' +
+                    '<div>' + escapeHtml(doc.content) + '</div></div>';
+        });
+        html += '</div>';
+    }
+
+    if (manualActions && manualActions.length) {
+        html += '<div class="section-title">人工处理记录</div><div class="card">';
+        manualActions.forEach(function(ma) {
+            html += '<div style="margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:6px;">' +
+                    '<span class="badge badge-' + (ma.status === 'completed' ? 'success' : (ma.status === 'rejected' ? 'failed' : 'stale')) + '">' + escapeHtml(ma.status) + '</span> ' +
+                    '操作人: ' + escapeHtml(ma.operator) + ' | ' + escapeHtml(ma.created_at) + '<br>' +
+                    '操作描述: ' + escapeHtml(ma.action_desc) + '<br>' +
+                    (ma.backup_ref ? ('备份文件: ' + escapeHtml(ma.backup_ref) + '<br>') : '') +
+                    (ma.recheck_result ? ('复测结果: ' + escapeHtml(ma.recheck_result)) : '') +
+                    '</div>';
+        });
+        html += '</div>';
+    }
+
+    document.getElementById('resultArea').innerHTML = html;
+    document.getElementById('resultArea').dataset.diagnosisId = data.diagnosis_id;
+}
+
+function openConfirmForm(diagnosisId, idx) {
+    const el = document.getElementById('confirmForm_' + diagnosisId + '_' + idx);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function confirmAction(diagnosisId, idx) {
+    const deviceName = document.getElementById('deviceName_' + idx).value.trim();
+    const operator = document.getElementById('operator_' + idx).value.trim();
+    const actionDesc = document.getElementById('actionDesc_' + idx).value.trim();
+    if (!deviceName || !operator) { alert('请填写设备名称和操作人'); return; }
+    const resp = await fetch('/api/manual/confirm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({diagnosis_id: diagnosisId, device_name: deviceName, operator: operator, action_desc: actionDesc})
+    });
+    const data = await resp.json();
+    alert('已记录人工确认，备份状态: ' + (data.status || JSON.stringify(data)));
+    loadDiagnosis(diagnosisId);
+}
+
+async function rejectAction(diagnosisId, idx) {
+    const operator = document.getElementById('operator_' + idx).value.trim() || '未填写';
+    const reason = prompt('请输入驳回原因：');
+    if (reason === null) return;
+    const resp = await fetch('/api/manual/reject', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({diagnosis_id: diagnosisId, operator: operator, reason: reason})
+    });
+    await resp.json();
+    alert('已驳回该建议');
+    loadDiagnosis(diagnosisId);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# E501: 不强制行长；E402: 入口脚本需先 sys.path 引导 + load_dotenv() 再导入项目模块
+ignore = ["E501", "E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not slow'"
+markers = ["slow: 需要下载 embedding 模型的慢测试"]

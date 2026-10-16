@@ -1,0 +1,238 @@
+{
+  "articles": [
+    {
+      "id": "KB-VLAN-001",
+      "category": "VLAN",
+      "title": "交换机端口未加入正确VLAN导致终端二层不通",
+      "content": "当终端能获取物理链路但无法与同一网段其他主机通信时，常见原因是接入端口（access port）的VLAN配置与预期不符。应使用 show vlan brief 核对端口所属VLAN，若端口显示在错误的VLAN或处于默认VLAN1，需用 interface 下的 switchport access vlan <id> 命令修正。修改前应先确认该VLAN是否已在交换机的VLAN数据库中创建（show vlan brief 中能看到该VLAN号），否则需先用 vlan <id> 全局命令创建。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x / IOSvL2 (GNS3)",
+      "source": "Cisco官方文档《Catalyst Switching Configuration Guide》VLAN章节"
+    },
+    {
+      "id": "KB-VLAN-002",
+      "category": "VLAN",
+      "title": "Trunk链路未放行所需VLAN导致跨交换机VLAN不通",
+      "content": "多台交换机级联时，中间链路若配置为trunk，需确认 allowed vlan 列表包含所有需要跨越的VLAN。可用 show interface trunk 查看trunk端口的allowed VLAN与active VLAN列表。若某VLAN不在allowed列表中，使用 switchport trunk allowed vlan add <id> 添加；注意直接使用不带add的命令会覆盖整个列表，可能误删其他VLAN。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x / IOSvL2 (GNS3)",
+      "source": "Cisco官方文档《Catalyst Switching Configuration Guide》Trunking章节"
+    },
+    {
+      "id": "KB-VLAN-003",
+      "category": "VLAN",
+      "title": "VLAN间路由缺失子接口或SVI导致跨VLAN不通",
+      "content": "单臂路由或三层交换环境下，若路由器/交换机未配置对应VLAN的子接口（如GigabitEthernet0/0.10 encapsulation dot1Q 10）或SVI（interface vlan 10），该VLAN内终端将无法与其他VLAN通信，即使二层VLAN配置正确。应检查 show ip interface brief 中对应子接口/VLAN接口是否存在且状态为up/up，并确认已配置正确的IP地址作为该VLAN网段的网关。",
+      "applicable_device": "Cisco IOS 路由器 / 三层交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Inter-VLAN Routing Configuration Guide》"
+    },
+    {
+      "id": "KB-VLAN-004",
+      "category": "VLAN",
+      "title": "Native VLAN不匹配导致trunk链路间歇性故障",
+      "content": "trunk两端的native vlan（默认未加802.1Q标签的VLAN）若不一致，会导致该VLAN流量被错误转发或丢弃，并在日志中出现native VLAN mismatch告警。应使用 show interface trunk 对比两端native vlan编号，用 switchport trunk native vlan <id> 统一配置。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档 802.1Q Trunking 配置说明"
+    },
+    {
+      "id": "KB-VLAN-005",
+      "category": "VLAN",
+      "title": "VLAN删除后遗留端口导致端口处于inactive状态",
+      "content": "当某VLAN从VLAN数据库中被删除，但仍有access端口关联该VLAN号时，show vlan brief 会显示端口状态为 inactive，该端口无法转发任何流量。排查时应确认该VLAN是否被误删，若业务仍需要该VLAN应重新创建；若端口确实不再使用该VLAN，应重新分配到正确VLAN。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco社区知识库 VLAN故障排查专题"
+    },
+    {
+      "id": "KB-ROUTE-001",
+      "category": "路由",
+      "title": "缺少默认路由导致访问未知网段流量被丢弃",
+      "content": "分支路由器若仅配置了到总部和本地网段的明细路由，缺少默认路由（0.0.0.0/0）或到总部出口的汇总路由，访问其他未知目标时会出现无法路由的情况。应使用 show ip route 检查是否存在Gateway of last resort（即默认路由），若缺失可配置静态默认路由 ip route 0.0.0.0 0.0.0.0 <下一跳地址> 指向上联设备，或在动态路由协议中正确发布/接收默认路由。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《IP Routing Configuration Guide》静态路由章节"
+    },
+    {
+      "id": "KB-ROUTE-002",
+      "category": "路由",
+      "title": "静态路由下一跳不可达导致路由表中路由被标记失效",
+      "content": "静态路由依赖下一跳地址的可达性，若下一跳接口down或下一跳IP本身不可达，该静态路由条目可能从路由表中消失（recursive route不可解析）。应先用 show ip interface brief 确认下一跳所在接口状态，再用 show ip route 确认该静态路由是否仍在表中生效，必要时结合 ping 下一跳地址验证三层可达性。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《IP Routing Configuration Guide》"
+    },
+    {
+      "id": "KB-ROUTE-003",
+      "category": "路由",
+      "title": "OSPF邻居状态异常导致路由学习不完整",
+      "content": "动态路由环境下，若两端OSPF邻居关系未建立到Full状态（可能停留在Init/2-Way/ExStart等），对端路由将无法被学习到。常见原因包括区域号不匹配、网络类型不一致、认证配置不一致或Hello/Dead Timer不一致。应使用 show ip ospf neighbor 查看邻居状态，结合接口配置核对区域号与网络类型。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《OSPF Configuration Guide》邻居建立章节"
+    },
+    {
+      "id": "KB-ROUTE-004",
+      "category": "路由",
+      "title": "路由环路导致TTL耗尽、业务间歇性不通",
+      "content": "当多条路由配置相互指向对方作为下一跳，可能形成路由环路，表现为ping时延逐渐增大或出现TTL expired in transit提示。排查时应使用 traceroute 观察路径是否在若干跳之间往复，并逐跳核对各设备的 show ip route 配置，确认是否存在错误的静态路由或路由重分发导致的环路。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco社区知识库 路由环路诊断专题"
+    },
+    {
+      "id": "KB-ROUTE-005",
+      "category": "路由",
+      "title": "路由被更长掩码或更低管理距离的错误路由覆盖",
+      "content": "当路由表中存在多条到同一目标网络但来源不同（静态/OSPF/直连）的路由时，设备按管理距离（Administrative Distance）和最长匹配原则选路，可能导致预期之外的路径被选中。应对比 show ip route 中目标网段的管理距离和下一跳，确认是否有非预期的静态路由或协议路由优先被选中，必要时调整管理距离或删除错误路由。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档 Administrative Distance 参考表"
+    },
+    {
+      "id": "KB-DHCP-001",
+      "category": "DHCP",
+      "title": "DHCP中继未配置导致跨网段终端无法获取地址",
+      "content": "若DHCP服务器与客户端不在同一广播域，网关设备需配置DHCP中继（ip helper-address <DHCP服务器IP>）才能转发DHCP请求。缺失该配置时，终端会反复发送DHCPDISCOVER但得不到响应，最终自动分配169.254.x.x类APIPA地址或保持无地址状态。应在客户端所在VLAN对应的SVI/子接口下检查并配置 ip helper-address。",
+      "applicable_device": "Cisco IOS 路由器/三层交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《DHCP Configuration Guide》DHCP Relay章节"
+    },
+    {
+      "id": "KB-DHCP-002",
+      "category": "DHCP",
+      "title": "DHCP地址池耗尽导致新终端无法获取地址",
+      "content": "DHCP地址池中可分配地址耗尽时，新接入终端的DHCPDISCOVER请求不会得到DHCPOFFER响应。应在DHCP服务器上查看地址池使用情况（如 show ip dhcp pool 或对应平台的租约列表），确认是否接近或已达到池容量上限，并结合排除地址范围（excluded-address）核实可用地址数量是否被过度缩减。",
+      "applicable_device": "Cisco IOS DHCP Server",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《DHCP Configuration Guide》地址池管理章节"
+    },
+    {
+      "id": "KB-DHCP-003",
+      "category": "DHCP",
+      "title": "DHCP池网段与接口实际网段不匹配导致终端获取错误网关",
+      "content": "若DHCP池配置的网络地址、子网掩码或默认网关与终端实际接入的VLAN网段不符，终端会获得无法使用的地址或错误的默认网关，表现为能获取IP但无法访问网关之外的任何资源。应核对DHCP池配置中的 network 和 default-router 参数与该VLAN的SVI实际地址是否一致。",
+      "applicable_device": "Cisco IOS DHCP Server",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《DHCP Configuration Guide》"
+    },
+    {
+      "id": "KB-DHCP-004",
+      "category": "DHCP",
+      "title": "DHCP服务被ACL或端口安全策略阻断",
+      "content": "若接入端口启用了端口安全（port-security）且MAC地址表已满，或ACL错误地过滤了UDP 67/68端口的广播流量，会导致DHCP请求/响应无法正常到达。应检查端口安全日志（如因违例导致端口err-disable）以及途经链路上ACL是否放行DHCP相关流量。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机、路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco社区知识库 DHCP故障排查专题"
+    },
+    {
+      "id": "KB-ACL-001",
+      "category": "ACL",
+      "title": "ACL规则顺序错误导致误拦截合法流量",
+      "content": "ACL按配置顺序逐条匹配，一旦命中即停止后续匹配。若将范围较大的deny语句放在允许语句之前，会导致本应放行的流量被提前拒绝。应使用 show access-lists 查看规则顺序及各条目的匹配计数（matches计数会随流量增长），确认是否有宽泛的deny规则排在具体permit规则之前。",
+      "applicable_device": "Cisco IOS 路由器/交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Access Control Lists Configuration Guide》规则顺序章节"
+    },
+    {
+      "id": "KB-ACL-002",
+      "category": "ACL",
+      "title": "隐式deny any导致未显式放行的流量被拒绝",
+      "content": "每个ACL末尾都隐含一条deny any（不会在show access-lists中显示），若希望放行除明确拒绝之外的所有流量，需要在ACL末尾显式添加 permit ip any any。若管理员未意识到这一隐式规则，可能导致新增业务流量在没有匹配到任何已有permit条目时被静默丢弃。",
+      "applicable_device": "Cisco IOS 路由器/交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Access Control Lists Configuration Guide》"
+    },
+    {
+      "id": "KB-ACL-003",
+      "category": "ACL",
+      "title": "ACL应用方向(in/out)错误导致流量未按预期过滤",
+      "content": "在接口下应用ACL时需指定方向(in表示入接口方向，out表示出接口方向)，方向配置错误会导致ACL对目标流量完全不生效，或拦截了不该拦截的流量。应使用 show ip interface <接口名> 查看该接口当前应用的ACL编号及方向，核对是否与设计意图一致。",
+      "applicable_device": "Cisco IOS 路由器/交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Access Control Lists Configuration Guide》接口应用章节"
+    },
+    {
+      "id": "KB-ACL-004",
+      "category": "ACL",
+      "title": "ACL中反掩码(wildcard mask)配置错误导致匹配范围异常",
+      "content": "Cisco ACL使用反掩码而非子网掩码，书写错误（如把255.255.255.0误写为反掩码0.0.0.255对应的网段理解反了）会导致匹配到的地址范围与预期不符，可能过宽（误拦截大量正常流量）或过窄（未能拦截目标流量）。应逐条核对 show access-lists 中每条规则的网络地址与反掩码组合是否正确覆盖预期的源/目的网段。",
+      "applicable_device": "Cisco IOS 路由器/交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Access Control Lists Configuration Guide》反掩码说明"
+    },
+    {
+      "id": "KB-ACL-005",
+      "category": "ACL",
+      "title": "ACL未考虑返回流量导致单向通信异常",
+      "content": "标准ACL或未启用状态检测的扩展ACL仅按配置的方向过滤流量，若只放行了请求方向（如源到目的的TCP SYN），未对应放行应答方向流量（如目的到源的TCP ACK），会导致连接只能单向建立或完全失败。排查时应确认链路两端接口上的ACL是否均放行了双向必要流量，或改用 established 关键字放行已建立连接的应答流量。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Access Control Lists Configuration Guide》状态化过滤说明"
+    },
+    {
+      "id": "KB-IF-001",
+      "category": "接口故障",
+      "title": "接口administratively down需手动启用",
+      "content": "show ip interface brief 中若接口状态显示为 administratively down，说明该接口被人为使用 shutdown 命令关闭，并非物理故障。应进入接口配置模式执行 no shutdown 启用接口，并复测接口状态是否变为 up/up。",
+      "applicable_device": "Cisco IOS 路由器/交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Interface Configuration Guide》"
+    },
+    {
+      "id": "KB-IF-002",
+      "category": "接口故障",
+      "title": "接口line protocol down但physical up提示两端封装或时钟不匹配",
+      "content": "当接口物理层状态为up但line protocol显示down时，常见于串行链路两端封装协议不一致（如一端HDLC一端PPP）、时钟源未配置（DCE端缺少 clock rate）或keepalive设置不一致。应核对两端 show interface 输出中的encapsulation字段及keepalive配置是否一致。",
+      "applicable_device": "Cisco IOS 路由器（广域网接口）",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《WAN Interface Troubleshooting Guide》"
+    },
+    {
+      "id": "KB-IF-003",
+      "category": "接口故障",
+      "title": "双工/速率不匹配导致接口频繁出现CRC错误和丢包",
+      "content": "链路两端若双工模式不一致（一端全双工一端半双工），会出现大量late collision或CRC校验错误，表现为丢包和吞吐异常但接口状态仍可能显示up。应使用 show interface 查看duplex和speed字段及error计数器，确认两端是否一致，建议双端统一配置为auto协商或手动指定相同参数。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Ethernet Interface Configuration Guide》双工协商章节"
+    },
+    {
+      "id": "KB-IF-004",
+      "category": "接口故障",
+      "title": "接口错误禁用(err-disabled)需排查触发原因后手动恢复",
+      "content": "交换机端口因端口安全违例、BPDU Guard触发环路保护、或风暴控制等安全机制可能被置为err-disabled状态，表现为接口状态持续down且不会自动恢复。应用 show interface status err-disabled 结合日志确认触发原因，解决根因后使用 shutdown 接 no shutdown 手动恢复端口，避免直接恢复而不排查原因导致问题复发。",
+      "applicable_device": "Cisco IOS/IOSvL2 交换机",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《Port Security and STP Configuration Guide》"
+    },
+    {
+      "id": "KB-IF-005",
+      "category": "接口故障",
+      "title": "MTU不一致导致大包丢弃、小包正常的隧道/链路故障",
+      "content": "链路两端或经过的隧道接口MTU设置不一致时，小尺寸的ping包可能正常通过，但实际业务流量中的大包会被丢弃或触发分片，表现为部分应用异常而基础连通性测试正常。应使用 show interface 检查MTU配置，并可用带不同报文大小的连通性测试（如ping -l 指定大小、关闭分片）定位问题包长临界值。",
+      "applicable_device": "Cisco IOS 路由器",
+      "version": "IOS 15.x (GNS3)",
+      "source": "Cisco官方文档《IP MTU Configuration Guide》"
+    },
+    {
+      "id": "KB-GEN-001",
+      "category": "通用排查方法",
+      "title": "故障排查应遵循分层定位原则（物理层->链路层->网络层->应用层）",
+      "content": "面对连通性问题时，建议按OSI分层自下而上排查：先确认物理层接口状态和线路连接，再确认二层VLAN/Trunk/MAC学习是否正常，然后确认三层IP地址、路由表和ACL配置，最后确认应用层服务本身是否正常。这种顺序能避免在上层反复排查而忽略底层链路本身已经存在的问题。",
+      "applicable_device": "通用（路由器/交换机/终端）",
+      "version": "通用",
+      "source": "行业通用网络故障排查方法论（OSI分层诊断法）"
+    },
+    {
+      "id": "KB-GEN-002",
+      "category": "通用排查方法",
+      "title": "采集证据应包含采集时间以避免误用过期状态",
+      "content": "设备配置和状态会随时间变化，排查时必须核对采集记录的时间戳，确认当前使用的证据是否为最近一次成功采集的结果；若设备在采集窗口内不可达，应明确标注本次证据缺失，而不是沿用更早之前的历史记录当作当前状态，以免误导判断。",
+      "applicable_device": "通用（路由器/交换机/终端）",
+      "version": "通用",
+      "source": "运维证据管理最佳实践"
+    }
+  ]
+}

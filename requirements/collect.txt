@@ -1,0 +1,10 @@
+# 采集环境：仅设备采集
+python-dotenv==1.0.1
+netmiko==4.3.0
+# 固定 <4：paramiko 4.0+ 移除 SHA-1 KEX，老 Cisco IOSv 设备将无法 SSH 登录。
+paramiko==3.5.1
+# pysnmp 4.4.12 依赖已从 Python 3.12 移除的 imp / asyncore，无法运行；
+# 5.1.0 保留同步 hlapi（collector_snmp.py 零改动）并在 py3.12 下自动引入 pyasyncore 兼容层。
+pysnmp==5.1.0
+# 固定 0.4.x：pyasn1 0.5+ 移除了 pysnmp 依赖的 pyasn1.compat.octets。
+pyasn1==0.4.8

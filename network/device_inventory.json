@@ -1,0 +1,115 @@
+{
+  "devices": [
+    {
+      "device_name": "HQ-R1",
+      "role": "总部核心路由器",
+      "site": "总部",
+      "vendor": "Cisco",
+      "model": "IOSv (EVE-NG)",
+      "mgmt_ip": "192.168.249.11",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1", "GigabitEthernet0/2"]
+    },
+    {
+      "device_name": "BR-A-R2",
+      "role": "分支A路由器",
+      "site": "分支A",
+      "vendor": "Cisco",
+      "model": "IOSv (EVE-NG)",
+      "mgmt_ip": "192.168.249.12",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1"]
+    },
+    {
+      "device_name": "BR-B-R3",
+      "role": "分支B路由器",
+      "site": "分支B",
+      "vendor": "Cisco",
+      "model": "IOSv (EVE-NG)",
+      "mgmt_ip": "192.168.249.13",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1"]
+    },
+    {
+      "device_name": "HQ-SW1",
+      "role": "总部核心交换机",
+      "site": "总部",
+      "vendor": "Cisco",
+      "model": "IOSvL2 (EVE-NG)",
+      "mgmt_ip": "192.168.249.14",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "vlans": [10, 20],
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1", "GigabitEthernet0/2"]
+    },
+    {
+      "device_name": "BR-A-SW2",
+      "role": "分支A交换机",
+      "site": "分支A",
+      "vendor": "Cisco",
+      "model": "IOSvL2 (EVE-NG)",
+      "mgmt_ip": "192.168.249.15",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "vlans": [10],
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1"]
+    },
+    {
+      "device_name": "BR-B-SW3",
+      "role": "分支B交换机",
+      "site": "分支B",
+      "vendor": "Cisco",
+      "model": "IOSvL2 (EVE-NG)",
+      "mgmt_ip": "192.168.249.16",
+      "device_type": "cisco_ios",
+      "ssh_port": 22,
+      "snmp_port": 161,
+      "vlans": [10],
+      "interfaces": ["GigabitEthernet0/0", "GigabitEthernet0/1"]
+    },
+    {
+      "device_name": "HQ-SRV",
+      "role": "总部服务器终端",
+      "site": "总部",
+      "vendor": "N/A",
+      "model": "VPCS/Linux (GNS3)",
+      "mgmt_ip": "192.168.10.100",
+      "device_type": "linux",
+      "ssh_port": 22,
+      "snmp_port": null,
+      "interfaces": ["eth0"]
+    },
+    {
+      "device_name": "BR-A-PC",
+      "role": "分支A测试终端",
+      "site": "分支A",
+      "vendor": "N/A",
+      "model": "VPCS/Linux (GNS3)",
+      "mgmt_ip": "192.168.20.100",
+      "device_type": "linux",
+      "ssh_port": 22,
+      "snmp_port": null,
+      "interfaces": ["eth0"]
+    },
+    {
+      "device_name": "BR-B-PC",
+      "role": "分支B测试终端",
+      "site": "分支B",
+      "vendor": "N/A",
+      "model": "VPCS/Linux (GNS3)",
+      "mgmt_ip": "192.168.30.100",
+      "device_type": "linux",
+      "ssh_port": 22,
+      "snmp_port": null,
+      "interfaces": ["eth0"]
+    }
+  ]
+}

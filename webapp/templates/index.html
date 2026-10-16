@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>设备状态总览 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">设备台账（共 {{ devices|length }} 台）</div>
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th>设备名称</th>
+                    <th>角色</th>
+                    <th>站点</th>
+                    <th>厂商/型号</th>
+                    <th>管理IP</th>
+                    <th>最新采集状态</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for d in devices %}
+                <tr>
+                    <td><a href="/device/{{ d.device_name }}">{{ d.device_name }}</a></td>
+                    <td>{{ d.role }}</td>
+                    <td>{{ d.site }}</td>
+                    <td>{{ d.vendor }} {{ d.model }}</td>
+                    <td>{{ d.mgmt_ip }}</td>
+                    <td>
+                    {% set recs = status_by_device.get(d.device_name) %}
+                    {% if recs %}
+                        {% for r in recs %}
+                            <span class="badge badge-{{ r.status }}" title="{{ r.command }} @ {{ r.collected_at }}">
+                                {{ r.command }}: {{ r.status }}
+                            </span>
+                        {% endfor %}
+                    {% else %}
+                        <span class="badge badge-no_data">尚无采集数据</span>
+                    {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="muted">提示：设备状态由采集模块通过 SSH/SNMP 实际连接设备管理接口获取，标注的采集时间即为上一次成功/失败采集的时刻；状态为空表示该设备尚未采集到任何数据，不代表设备正常。</p>
+</main>
+</body>
+</html>

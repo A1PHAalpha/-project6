@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{{ device_name }} - 设备采集详情</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">设备 {{ device_name }} - 最近 {{ records|length }} 条采集记录</div>
+
+    {% if not records %}
+    <div class="card muted">该设备尚无任何采集记录。</div>
+    {% endif %}
+
+    {% for r in records %}
+    <div class="card">
+        <div class="flex-row">
+            <span class="badge badge-{{ r.status }}">{{ r.status }}</span>
+            <strong>{{ r.command }}</strong>
+            <span class="muted">采集时间: {{ r.collected_at }}</span>
+        </div>
+        {% if r.status == 'failed' %}
+            <p><strong>失败原因:</strong> {{ r.fail_reason }}</p>
+        {% endif %}
+        {% if r.parsed_json %}
+            <p><strong>结构化解析结果:</strong></p>
+            <pre class="raw-output">{{ r.parsed_json }}</pre>
+        {% endif %}
+        {% if r.raw_output %}
+            <details>
+                <summary class="muted">查看原始输出</summary>
+                <pre class="raw-output">{{ r.raw_output }}</pre>
+            </details>
+        {% endif %}
+    </div>
+    {% endfor %}
+</main>
+</body>
+</html>

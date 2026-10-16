@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements/dev.txt
+      - run: ruff check .
+      - run: python -m compileall -q collector rag_engine knowledge_base control webapp
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements/dev.txt
+      - run: pytest -q
+      - name: 导入冒烟
+        env:
+          LLM_API_KEY: dummy          # 仅用于让 llm_client 通过，不发生真实调用
+          APP_API_TOKEN: ci-dummy-token-0123456789
+        run: python -c "import webapp.main"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-index:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements/build.txt
+      - run: python -m knowledge_base.build_index --rebuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chroma-index
+          path: data/chroma
