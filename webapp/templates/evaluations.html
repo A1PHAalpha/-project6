@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>效果评测 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
+        <a href="/evaluations">效果评测</a>
+        <a href="/knowledge">知识库</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">评测实验（共 {{ experiments|length }} 次）</div>
+    <div class="card">
+        {% if not experiments %}
+        <p class="muted">尚无评测实验。运行 <code>python -m test_cases.compare_kb</code> 生成评测记录。</p>
+        {% endif %}
+        {% for e in experiments %}
+        <div class="history-item" onclick="location.href='/evaluations/{{ e.experiment_id }}'">
+            <strong>{{ e.experiment_id }}</strong>
+            <span class="badge">{{ e.status }}</span>
+            <span class="muted">
+                | 模型: {{ e.model_id }} | 用例结果: {{ e.result_count }}
+                | 开始: {{ e.started_at_utc }}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</main>
+</body>
+</html>

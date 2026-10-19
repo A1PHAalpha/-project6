@@ -55,6 +55,7 @@ def ensure_database() -> dict:
 
     status = {
         "status": "ready" if not warning else "degraded",
+        "schema_version": db.SCHEMA_VERSION,
         "device_count": len(devices),
         "inventory_loaded": inventory_loaded,
         "inventory_version_id": inventory.get("inventory_version_id") if inventory_loaded else None,
@@ -81,6 +82,23 @@ def inspect_knowledge_base(
         "message": "",
         "checked_at": db.now_iso(),
     }
+    try:
+        catalog = db.knowledge_catalog_summary()
+        status["catalog"] = {
+            key: catalog.get(key)
+            for key in ("sources", "articles", "active_versions", "chunks")
+        }
+        active_index = catalog.get("active_index")
+        status["index_version_id"] = (
+            active_index.get("index_version_id") if active_index else None
+        )
+        status["index_content_hash"] = (
+            active_index.get("content_hash") if active_index else None
+        )
+    except Exception as exc:
+        logger.warning("知识库目录元数据读取失败: %s", exc)
+        status["catalog"] = {}
+        status["index_version_id"] = None
 
     try:
         client = get_chroma_client(target_path)
@@ -96,8 +114,15 @@ def inspect_knowledge_base(
         count = collection.count()
         status["count"] = count
         if count > 0:
-            status["status"] = "ready"
-            status["message"] = f"知识库可用，共 {count} 条资料"
+            if status.get("index_version_id"):
+                status["status"] = "ready"
+                status["message"] = f"知识库可用，共 {count} 条资料"
+            else:
+                status["status"] = "degraded"
+                status["message"] = (
+                    f"Chroma 有 {count} 条资料，但缺少已发布的三期索引版本；"
+                    "请重新构建索引"
+                )
         else:
             status["status"] = "empty"
             status["message"] = "知识库集合存在，但没有任何资料"
@@ -235,6 +260,7 @@ def bootstrap_runtime() -> dict:
     kb_health = {
         "ready": "ready",
         "error": "error",
+        "degraded": "degraded",
         "missing": "degraded",
         "empty": "degraded",
     }.get(knowledge_base_status["status"], "unknown")

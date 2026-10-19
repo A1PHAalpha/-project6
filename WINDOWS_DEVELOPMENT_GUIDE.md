@@ -1,7 +1,7 @@
 # Windows 环境运行与调试指南
 
 > 诊断日期：2026-10-18  
-> 更新日期：2026-10-20（启动自动检查、项目 `.env` 显式加载、知识库降级已接入）  
+> 更新日期：2026-10-20（启动自动检查、三期知识/评测/治理表已接入）
 > 实测环境：Windows x64、Python 3.12.10、PowerShell  
 > 项目目录：`C:\Users\popcorn\Desktop\-project6`
 
@@ -13,7 +13,7 @@
 
 - `requirements/dev.txt` 与 `requirements/collect.txt` 共解析并安装 118 个包，`pip check` 无依赖冲突。
 - `ruff check .` 通过。
-- 常规单测 `62 passed, 1 deselected`；单独运行的 embedding slow 测试 `1 passed`。
+- 常规单测 `76 passed, 1 deselected`；单独运行的 embedding slow 测试 `1 passed`。
 - `BAAI/bge-small-zh-v1.5` 的 ONNX 模型可下载、可初始化。
 - 真实构建 26 条知识库记录成功。
 - 新进程重新打开持久化 Chroma 索引并检索成功，返回 4 条中文运维资料。
@@ -502,7 +502,7 @@ SSH_LEGACY_ALGOS=true
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-本项目配置默认跳过 slow 测试。本机实测结果为 `62 passed, 1 deselected`。
+本项目配置默认跳过 slow 测试。本机实测结果为 `76 passed, 1 deselected`。
 
 ### 9.3 真实 embedding 回归
 
@@ -559,7 +559,8 @@ $env:HF_HUB_OFFLINE = "1"
 1. 增加 `collect.ps1`，统一使用 `.venv\Scripts\python.exe`，替代 Bash 采集脚本。
 2. Windows 备份文件改用 NTFS ACL 限制访问，不要只依赖 `os.chmod(0o600)`。
 3. 在 CI 增加 `windows-latest` 的导入、单测和 embedding smoke job，至少覆盖路径、编码和 socket 行为。
-4. 按 [TODO.md](TODO.md) 增加知识库状态页面、初始化/重建接口和文章管理。
+4. 知识库状态/索引历史页面和三期表已经落地；继续按 [TODO.md](TODO.md)
+   增加重建后台任务、文章编辑和构建锁。
 
 ## 12. 参考资料
 

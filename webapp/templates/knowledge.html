@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>知识库状态 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
+        <a href="/evaluations">效果评测</a>
+        <a href="/knowledge">知识库</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">知识库目录</div>
+    <div class="card">
+        <p>
+            来源: {{ knowledge.sources }} |
+            文章: {{ knowledge.articles }} |
+            活跃版本: {{ knowledge.active_versions }} |
+            活跃片段: {{ knowledge.chunks }}
+        </p>
+        {% set active = knowledge.active_index %}
+        {% if active %}
+        <p><strong>当前索引: {{ active.index_version_id }}</strong>
+            <span class="badge">{{ active.status }}</span>
+        </p>
+        <p class="muted">
+            集合: {{ active.collection_name }} | 模型: {{ active.model_name or '未记录' }}
+            | 条目: {{ active.article_count }} | 构建: {{ active.built_at_utc or '未记录' }}
+        </p>
+        {% else %}
+        <p class="muted">尚无已发布索引，请执行 <code>python -m knowledge_base.build_index --rebuild</code>。</p>
+        {% endif %}
+    </div>
+
+    <div class="section-title">索引构建历史</div>
+    <div class="card">
+        <table>
+            <thead><tr><th>版本</th><th>状态</th><th>模型</th><th>条目</th><th>构建时间</th><th>错误</th></tr></thead>
+            <tbody>
+            {% for item in knowledge.indexes %}
+            <tr>
+                <td>{{ item.index_version_id }}</td>
+                <td>{{ item.status }}{% if item.is_active %} · 当前{% endif %}</td>
+                <td>{{ item.model_name or '' }}</td>
+                <td>{{ item.article_count }}</td>
+                <td>{{ item.built_at_utc or '' }}</td>
+                <td>{{ item.error_message or '' }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+</body>
+</html>

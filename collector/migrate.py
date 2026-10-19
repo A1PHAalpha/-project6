@@ -1,7 +1,7 @@
-"""数据库迁移入口（一期采集模型 + 二期诊断/人工变更模型）。
+"""数据库迁移入口（一期采集 + 二期诊断/变更 + 三期知识/评测/治理）。
 
 运行前会由 ``db.init_db`` 自动把旧库备份为
-``<db>.pre-v4-<timestamp>.bak``（旧一期库则为 ``pre-phase1``），然后按
+``<db>.pre-v5-<timestamp>.bak``（旧一期库则为 ``pre-phase1``），然后按
 ``schema_migrations`` 逐步迁移并保留旧表。
 
 用法：
@@ -51,6 +51,23 @@ def main() -> int:
             "health_checks",
             "audit_log",
             "reports",
+            "knowledge_sources",
+            "knowledge_articles",
+            "knowledge_article_versions",
+            "embedding_models",
+            "knowledge_index_versions",
+            "users",
+            "roles",
+            "permissions",
+            "user_roles",
+            "role_permissions",
+            "test_suites",
+            "test_cases",
+            "fault_injections",
+            "experiment_runs",
+            "experiment_results",
+            "retention_policies",
+            "maintenance_runs",
         ]
         for table in tables:
             count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]

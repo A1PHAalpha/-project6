@@ -6,10 +6,11 @@
 
 > **维护基线（2026-10-20）**：Python 3.12、FastAPI、SQLite、Chroma 1.5.9、
 > FastEmbed 0.9.0、`BAAI/bge-small-zh-v1.5`。快速测试基线为
-> `62 passed, 1 deselected`，Ruff 与 compileall 通过。
+> `76 passed, 1 deselected`，Ruff 与 compileall 通过。
 >
-> **一期 + 二期数据改造（2026-10-20）**：一期建立采集批次、设备结果、采集项和
-> 状态事实模型；二期增加 LLM 会话/工具/检索审计、诊断证据关联和人工变更事件流。
+> **一期 + 二期 + 三期数据改造（2026-10-20）**：一期建立采集批次、设备结果、采集项和
+> 状态事实模型；二期增加 LLM 会话/工具/检索审计、诊断证据关联和人工变更事件流；
+> 三期增加知识来源/文章版本/索引版本、评测实验、角色权限、审计和保留策略。
 > 旧库自动备份迁移，`collection_records` 保留兼容视图。详见
 > [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。
 
@@ -22,7 +23,7 @@
 - [3. 系统架构全景](#3-系统架构全景)
 - [4. 启动、诊断与人工变更链路](#4-启动诊断与人工变更链路)
 - [5. 模块职责与依赖边界](#5-模块职责与依赖边界)
-- [6. 数据库模型（一期 + 二期）](#6-数据库模型一期--二期)
+- [6. 数据库模型（一期 + 二期 + 三期）](#6-数据库模型一期--二期--三期)
 - [7. 知识库与本地 Embedding](#7-知识库与本地-embedding)
 - [8. API 与页面](#8-api-与页面)
 - [9. 配置项](#9-配置项)
@@ -194,7 +195,10 @@ python -c "from knowledge_base.retriever import retrieve; print([h['id'] for h i
 - 查看总部/分支机构设备的最新采集状态。
 - 输入“分支A路由器和交换机之间不通”，定位相关设备并诊断。
 - 对比启用/禁用知识库时的诊断效果。
-- 审核模型建议，自动备份设备配置，人工执行变更后复测。
+- 查看知识文章版本、来源和当前活跃索引。
+- 运行 10 个场景的持久化评测，比较准确率、可执行性和响应时间。
+- 审核模型建议，人工确认后备份设备配置，执行变更后复测。
+- 查看操作审计和保留策略 dry-run 结果。
 - 导出包含证据、检索来源和建议的 Markdown 报告。
 
 ### 2.3 设计原则
@@ -270,6 +274,9 @@ graph TB
 | LLM 审计 | 会话、上下文、模型调用、检索命中、证据关联 |
 | 工具调用 | 本地只读工具网关，保存工具参数、结果和采集批次关联；预留 MCP |
 | 人工处理 | 变更请求、审批、物理/软件步骤、命令输出、备份和真实复测 |
+| 知识库治理 | 来源、文章版本、内容哈希、embedding 模型和索引版本 |
+| 效果评测 | 测试集、用例、故障注入、有/无知识库实验结果和汇总指标 |
+| 权限与审计 | 角色/权限基础表、可选 `APP_RBAC_ENFORCE`、`audit_log` 追加审计 |
 | 异步任务 | 仅启动采集使用 Python 后台线程，无消息队列 |
 | 鉴权 | 单口令 Token；Header、Bearer 或 HttpOnly Cookie |
 | 默认监听 | `127.0.0.1:8000` |
@@ -415,13 +422,13 @@ graph LR
 | `webapp/` | FastAPI 页面/API、鉴权、报告下载 | `webapp/main.py` | 启动、RAG、control、db |
 | `app_bootstrap.py` | 启动准备、状态检查、后台采集调度 | `bootstrap_runtime()` | db、collector、knowledge_base |
 | `project_config.py` | 只加载项目根 `.env`，布尔配置解析 | `load_project_env()`、`env_flag()` | python-dotenv |
-| `collector/` | 台账同步、SSH/SNMP/Ping 采集、输出解析、批次落库 | `run_collect.py`、`db.py`、`state_parser.py` | Netmiko、PySNMP、sqlite3 |
+| `collector/` | 台账同步、SSH/SNMP/Ping 采集、输出解析、批次落库、保留策略 | `run_collect.py`、`db.py`、`state_parser.py`、`retention.py` | Netmiko、PySNMP、sqlite3 |
 | `knowledge_base/` | 文章、Embedding、建索引、检索 | `build_index.py`、`retriever.py` | Chroma、FastEmbed |
 | `rag_engine/` | 设备识别、证据构建、Prompt、LLM、脱敏、会话落库 | `diagnosis_engine.py` | db、retriever、OpenAI |
 | `ops_tools/` | 本地只读工具网关，预留 MCP 适配 | `readonly_tools.py` | db、collector |
 | `control/` | 配置备份、人工变更、物理操作、复测 | `change_workflow.py`、`manual_change_workflow.py` | db、Netmiko |
 | `network/` | 设备台账静态数据 | `device_inventory.json` | 无 |
-| `test_cases/` | 10 个故障场景与 KB 对比演示 | `compare_kb.py` | 全链路 |
+| `test_cases/` | 10 个故障场景、评分规则与持久化 KB 对比 | `compare_kb.py`、`evaluation.py` | 全链路、SQLite |
 | `tests/` | 解析器、数据库迁移、采集编排、启动、鉴权和慢速检索测试 | `pytest` | pytest |
 
 ### 5.3 核心文件阅读优先级
@@ -441,10 +448,10 @@ graph LR
 
 ---
 
-## 6. 数据库模型（一期 + 二期）
+## 6. 数据库模型（一期 + 二期 + 三期）
 
 数据库路径由 `SQLITE_DB_PATH` 指定，默认 `data/ops.db`。所有访问都经过
-[collector/db.py](collector/db.py)。当前结构版本为 `schema_migrations.version = 4`。
+[collector/db.py](collector/db.py)。当前结构版本为 `schema_migrations.version = 5`。
 
 完整表结构、字段、Mermaid ER 图、索引和迁移规则见
 [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。README 只保留核心数据链。
@@ -468,9 +475,14 @@ flowchart LR
     CHANGE --> BACKUP["config_backups<br/>配置备份"]
     CHANGE --> CHECK["rechecks<br/>真实复测"]
     CHECK --> RUN
+    CATALOG --> SESSION
+    EVAL["test_suites / test_cases / experiment_runs<br/>评测实验"] --> SESSION
+    SESSION --> RESULTKB["experiment_results<br/>有/无知识库结果"]
+    CATALOG["knowledge_sources / knowledge_articles<br/>文章版本与索引版本"]
 ```
 
-核心表分为四组：资产与拓扑、采集与状态、诊断会话与工具审计、人工处理与复测。
+核心表分为五组：资产与拓扑、采集与状态、诊断会话与工具审计、人工处理与复测、
+知识库/评测治理。
 完整的表、字段、索引和状态约束见
 [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)，避免在 README 重复维护。
 
@@ -492,7 +504,7 @@ flowchart LR
 python -m collector.migrate
 ```
 
-升级前会自动生成 `<db>.pre-v4-<timestamp>.bak`。迁移细节见
+升级前会自动生成 `<db>.pre-v5-<timestamp>.bak`。迁移细节见
 [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。
 
 ---
@@ -518,13 +530,17 @@ python -m collector.migrate
 
 ```mermaid
 flowchart LR
-    A["articles.json"] --> B["拼接 title + content"]
+    A["articles.json"] --> V["knowledge_sources<br/>knowledge_articles / versions"]
+    V --> B["拼接 title + content"]
     B --> C["FastEmbed ONNX"]
     C --> D["Chroma collection<br/>ops_knowledge_base"]
     D --> E["data/chroma"]
+    D --> I["knowledge_index_versions<br/>active/retired"]
 ```
 
-集合名固定为 `ops_knowledge_base`。写入时保存文档、向量和元数据。
+集合名固定为 `ops_knowledge_base`。写入时保存文档、向量、文章版本、来源和索引版本。
+只有 Chroma 写入成功后才把新索引发布为 `is_active=1`；失败索引保留为 `failed`，旧索引
+不会被替换。
 
 ### 7.3 检索
 
@@ -533,7 +549,8 @@ flowchart LR
 1. 加载持久化集合；
 2. 集合不存在或为空时抛出 `KnowledgeBaseUnavailable`；
 3. 使用同一 Embedding 模型编码查询；
-4. 返回 `id/title/category/applicable_device/version/source/content/distance`。
+4. 返回 `id/title/category/applicable_device/version/source/source_url/content/distance`，
+   以及 `article_version_id`、`index_version_id` 和 `content_hash`。
 
 ### 7.4 模型一致性
 
@@ -541,7 +558,8 @@ flowchart LR
 - 更换模型、实现或 collection 配置后必须 `--rebuild`。
 - `FASTEMBED_CACHE_PATH` 默认示例为 `./models/fastembed`。
 - 模型缓存完整后，可设置 `HF_HUB_OFFLINE=1` 做离线验证。
-- 启动检查只读取集合数量，不会下载模型；真正的模型加载发生在首次建索引或查询。
+- 启动检查会同时核对 Chroma 数量和数据库中的 active 索引版本；只有两者一致才标记
+  `ready`，不会在启动时下载模型。
 
 ---
 
@@ -567,6 +585,9 @@ flowchart LR
 | `/diagnose` | 提交诊断、查看历史、会话和检索依据 |
 | `/changes` | 人工变更列表 |
 | `/changes/{change_id}` | 审批、步骤、命令、物理操作、备份和复测 |
+| `/evaluations` | 评测实验列表和准确率/可执行性/耗时对比 |
+| `/evaluations/{experiment_id}` | 逐案例评测结果、期望要点和错误 |
+| `/knowledge` | 知识来源、文章版本、活跃索引和构建历史 |
 | `/api/export/{id}` | 下载 Markdown 诊断报告 |
 
 ### 8.3 JSON API
@@ -581,6 +602,11 @@ flowchart LR
 | `GET` | `/api/tools` | 已注册的只读工具 |
 | `POST` | `/api/tools/{tool_name}` | 调用只读工具并落库 |
 | `GET` | `/api/health` | 当前运行状态和最近健康检查历史 |
+| `GET` | `/api/knowledge-base/status` | 知识目录、活跃索引和索引历史 |
+| `GET` | `/api/evaluations` | 评测实验列表 |
+| `GET` | `/api/evaluations/{experiment_id}` | 逐案例评测结果和汇总 |
+| `GET` | `/api/audit` | 最近审计事件，可按目标过滤 |
+| `GET` | `/api/users` | 用户、角色和状态 |
 | `POST` | `/api/changes` | 从诊断结论创建人工变更 |
 | `GET` | `/api/changes` | 变更列表 |
 | `GET` | `/api/changes/{change_id}` | 变更详情、步骤、审批、事件和复测 |
@@ -596,6 +622,9 @@ flowchart LR
 | `POST` | `/api/manual/reject` | `{diagnosis_id, operator, reason}` |
 
 接口文档默认关闭；仅在开发时设置 `APP_ENABLE_DOCS=true`。
+
+设置 `APP_RBAC_ENFORCE=true` 后，创建、审批、执行和复测接口会校验三期角色权限。
+默认关闭以兼容当前单用户实验环境；Token 仍是外层访问边界。
 
 ### 8.4 诊断响应示例
 
@@ -664,6 +693,7 @@ flowchart LR
 | Web | `APP_HOST` / `APP_PORT` | 监听地址和端口 |
 | Web | `APP_API_TOKEN` | 必填访问令牌，长度 ≥ 16 |
 | Web | `APP_ENABLE_DOCS` / `APP_RELOAD` | 文档与热重载 |
+| Web | `APP_RBAC_ENFORCE` | 是否启用角色权限校验，默认 `false` |
 | 存储 | `SQLITE_DB_PATH` | SQLite 文件路径 |
 | 存储 | `CHROMA_DB_PATH` | Chroma 持久化目录 |
 
@@ -682,6 +712,9 @@ Python 进程。`APP_RELOAD=true` 只用于开发环境。
 | 凭据 | 仅 `.env`，不进入 Git |
 | 监听 | 默认仅本机 `127.0.0.1` |
 | 鉴权 | 单 Token，常量时间比较 |
+| 角色权限 | `users/roles/permissions`；`APP_RBAC_ENFORCE=true` 时校验审批/执行权限 |
+| 审计 | `audit_log` 追加记录诊断、变更、索引、评测、保留策略操作 |
+| 数据保留 | 默认 dry-run；显式 `--apply` 才删除过期健康检查和孤立原始内容 |
 | 接口文档 | 默认关闭 |
 | 自动设备命令 | 必须命中 `collector/whitelist_commands.py` |
 | 配置变更 | 不下发，只生成建议和人工变更记录 |
@@ -707,7 +740,9 @@ Python 进程。`APP_RELOAD=true` 只用于开发环境。
 python -m pytest
 python -m pytest -m slow -vv
 python -m ruff check .
-python -m compileall -q collector rag_engine knowledge_base control webapp app_bootstrap.py project_config.py
+python -m compileall -q collector rag_engine knowledge_base control webapp test_cases ops_tools app_bootstrap.py project_config.py
+python -m collector.retention
+python -m test_cases.compare_kb
 ```
 
 测试默认使用临时 SQLite 和 Chroma，并设置 `APP_AUTO_COLLECT=false`，不会连接真实设备。
@@ -721,6 +756,7 @@ python -m compileall -q collector rag_engine knowledge_base control webapp app_b
 | 编排 | 数据库/知识库启动检查、后台采集状态、采集摘要 |
 | 配置 | 项目 `.env` 不回退父目录 |
 | Web | Token 鉴权、登录 Cookie、页面和静态资源 |
+| 三期治理 | 知识目录/索引版本、评测实验、评分、权限、审计、保留策略 |
 | 慢测试 | 真实构建 26 条索引并检索，需要模型缓存 |
 
 ### 11.3 推荐排障顺序
@@ -744,6 +780,7 @@ python -m compileall -q collector rag_engine knowledge_base control webapp app_b
 | 启动采集 `skipped` | `DEVICE_USERNAME` / `DEVICE_PASSWORD` |
 | 启动采集 `failed/partial` | ZeroTier、路由、22/161 端口、设备凭据 |
 | 检索报集合不可用 | 建索引和查询是否使用同一模型/路径 |
+| 知识库 `degraded` 且提示缺少索引版本 | 重新执行 `python -m knowledge_base.build_index --rebuild` |
 | LLM 调用失败 | `LLM_API_KEY`、`LLM_BASE_URL`、模型名、网络 |
 | 页面无设备 | 数据库是否已加载台账；查看 `system_status.database` |
 | 诊断历史正常但证据旧 | 查看 `collected_at` 和 `is_stale`，重新采集 |
@@ -757,9 +794,10 @@ python -m test_cases.compare_kb
 python -m test_cases.demo_e2e
 ```
 
-`compare_kb` 会使用隔离的临时 SQLite/Chroma，对比 10 个场景在
-`use_kb=True/False` 下的结果；每个场景开始前会清空临时采集证据，避免前一个
-场景污染当前状态。默认仍需要有效 LLM Key 才能得到真实模型输出。
+`compare_kb` 使用隔离的 scratch SQLite 写入 10 个场景的采集证据，避免清空真实
+`ops.db`；实验、用例、逐案例结果、证据哈希和汇总指标写入当前应用数据库，可在
+`/evaluations` 页面查看。每个场景开始前都会清空 scratch 证据，避免前一个场景污染
+当前状态。默认仍需要有效 LLM Key 才能得到真实模型输出。
 
 真实排障演示：
 
@@ -771,6 +809,13 @@ python -m test_cases.demo_e2e
 6. 人工确认并备份；
 7. 人工在设备上修复；
 8. 复测并导出报告。
+
+数据保留检查：
+
+```bash
+python -m collector.retention
+python -m collector.retention --apply
+```
 
 ### 11.6 CI
 
@@ -794,6 +839,10 @@ python -m test_cases.demo_e2e
 | 新增采集来源 | `collector/`、`run_collect.py` | 扩展摘要和 `startup_collection` 状态 |
 | 新增知识文章 | `knowledge_base/articles.json` | `--rebuild` 并增加检索测试 |
 | 更换 Embedding 模型 | `.env`、`knowledge_base/` | 清理旧集合、完整重建、离线验证 |
+| 新增/修改知识索引 | `knowledge_base/build_index.py`、`collector/db.py` | `knowledge_index_versions`、`kb_chunks`、`retrieval_hits` |
+| 新增评测用例 | `test_cases/scenarios.py`、`test_cases/evaluation.py` | 更新期望要点、入库用例和评分测试 |
+| 修改保留策略 | `collector/retention.py`、`retention_policies` | 先 dry-run，禁止默认删除审计 |
+| 修改角色权限 | `collector/db.py` 种子、`webapp/main.py` | 同步 `role_permissions` 和 RBAC 测试 |
 | 修改诊断流程 | `rag_engine/diagnosis_engine.py` | 同步会话、检索快照、证据关联、Prompt、响应字段和测试 |
 | 修改 Prompt 结构 | `rag_engine/prompt_templates.py` | 更新模板 ID 和前端渲染/报告导出 |
 | 新增只读工具 | `network/tool_registry.json`、`ops_tools/readonly_tools.py` | 同步工具 schema、只读边界和测试 |
@@ -866,14 +915,15 @@ python -m test_cases.demo_e2e
 ├── webapp/                       # FastAPI、模板、鉴权、报告导出
 ├── collector/                    # 台账、SSH/SNMP/Ping、SQLite
 │   ├── state_parser.py           # 原始输出 -> 状态事实
-│   └── migrate.py                # 数据库迁移入口
-├── knowledge_base/               # 文章、Embedding、Chroma 检索
+│   ├── migrate.py                # 数据库迁移入口
+│   └── retention.py              # 保留策略 dry-run / apply
+├── knowledge_base/               # 文章、来源版本、Embedding、Chroma 检索
 ├── rag_engine/                   # 设备识别、证据、Prompt、LLM
 ├── ops_tools/                    # 只读工具网关，预留 MCP 适配
 ├── control/                      # 只读执行、备份、人工变更、复测
 ├── network/device_inventory.json # 设备唯一静态台账
-├── docs/DATABASE_DESIGN.md       # 一期+二期数据库结构与迁移设计
-├── test_cases/                   # 10 场景对比和 E2E 演示
+├── docs/DATABASE_DESIGN.md       # 一期+二期+三期数据库结构与迁移设计
+├── test_cases/                   # 10 场景、评分规则和持久化评测
 ├── tests/                        # pytest
 ├── requirements/                 # base/build/collect/dev 分层依赖
 └── data/                         # 运行产物：ops.db、chroma
@@ -885,15 +935,18 @@ python -m test_cases.demo_e2e
 
 当前更适合单机、单用户或受控演示环境。主要技术债：
 
-- 知识库状态、初始化、重建和文章管理还没有 App 页面/API，见 [TODO.md](TODO.md)。
+- 知识库已有状态/索引历史页面，但初始化、重建和文章编辑仍通过 CLI，文章管理 UI 见
+  [TODO.md](TODO.md)。
 - 启动采集是进程内 daemon 线程，没有持久任务、重试、取消和多 worker 协调。
 - 当前已引入 `schema_migrations`、外键检查和旧库自动迁移；后续表结构变更仍需按版本追加迁移。
-- 采集状态事实、原始输出、配置快照和诊断记录还没有保留期限、归档或清理策略。
+- 保留策略已有 dry-run/apply CLI，但对象存储、加密归档和更细粒度策略仍未实现。
 - 一期的当前状态读模型仍然是函数/查询实现，尚未拆成独立物化表或缓存层。
 - 本地只读工具和工具调用审计已经落地，但尚未启用模型驱动的自动工具循环；MCP 仅预留适配边界。
-- 人工变更支持物理/软件步骤、审批、备份和复测；附件上传 UI、多人 RBAC 和审批权限尚未实现。
+- 人工变更支持物理/软件步骤、审批、备份和复测；附件上传 UI 尚未实现。
+- 角色/权限表和可选 `APP_RBAC_ENFORCE` 已落地，但外层仍是单 Token，尚不等同于多用户身份系统。
 - `diagnosis_records` 仍作为兼容表保留，新的诊断以会话和结论表为主。
-- 故障注入、知识库有无检索的自动评测表尚未实现，属于下一阶段。
+- 评测已保存有/无知识库结果、正确性和耗时；当前故障注入仍是 synthetic 证据，
+  尚未接入真实 EVE-NG 故障注入执行器。
 - 单设备采集串行执行，设备多时启动采集会持续较长时间。
 - LLM 调用是同步 OpenAI SDK；当前依赖 FastAPI 线程池，尚未做流式/异步任务。
 - `system_status.startup_collection` 已有持久化状态，但还没有查询 API 和页面。
@@ -901,7 +954,7 @@ python -m test_cases.demo_e2e
 
 相关文档：
 
-- [一期+二期数据库结构设计](docs/DATABASE_DESIGN.md)
+- [一期+二期+三期数据库结构设计](docs/DATABASE_DESIGN.md)
 - [Windows 运行与调试指南](WINDOWS_DEVELOPMENT_GUIDE.md)
 - [知识库管理 TODO](TODO.md)
 - [环境变量模板](.env.example)

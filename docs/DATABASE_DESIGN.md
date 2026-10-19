@@ -1,14 +1,16 @@
-# 数据库结构设计（一期 + 二期）
+# 数据库结构设计（一期 + 二期 + 三期）
 
 本文描述企业网络智能运维诊断系统的完整数据模型。一期先把
 **资产、采集批次、设备结果、采集项和状态事实**建立成可追溯的数据链；二期继续增加
 **诊断会话、模型工具调用、检索审计、证据关联和人工变更事件流**，同时保留旧版
-诊断、人工处理和运行状态表，确保现有页面与迁移期流程继续工作。
+诊断、人工处理和运行状态表；三期补齐 **知识库来源与版本、索引版本、评测实验、
+角色权限、审计和保留策略**，确保现有页面与迁移期流程继续工作。
 
-> 当前实现版本：`schema_migrations.version = 4`。版本 1 为
+> 当前实现版本：`schema_migrations.version = 5`。版本 1 为
 > `phase1_asset_collection_state`，版本 2 为 `normalize_utc_timestamps`，
 > 版本 3 为 `phase2_agent_sessions_tools_and_citations`，
-> 版本 4 为 `phase2b_human_change_and_operations`。
+> 版本 4 为 `phase2b_human_change_and_operations`，
+> 版本 5 为 `phase3_knowledge_evaluation_and_governance`。
 
 ## 1. 设计目标
 
@@ -20,6 +22,15 @@
 - 接口、路由、VLAN、ACL、邻居、可达性和配置都能成为独立状态事实，为拓扑构建和诊断提供证据。
 - 最近一次设备不可达时，当前状态返回 `unknown`，不再沿用历史成功状态。
 - 旧 `collection_records` 表保留为兼容视图，迁移期间现有页面和测试不中断。
+
+三期继续解决：
+
+- 知识文章有独立来源、内容版本、适用平台和内容哈希，检索结果可以回到具体版本；
+- 每次 Chroma 构建有独立索引版本，成功后才发布为当前索引，失败不影响旧索引；
+- 故障场景、测试用例、故障注入、实验运行和逐案例结果全部进入数据库；
+- 有/无知识库评测保存同一证据哈希、准确率、可执行性、耗时和错误；
+- 角色、权限、审计事件和保留策略有独立数据模型；
+- 默认只做保留策略 dry-run，避免自动删除审计和业务证据。
 
 ## 2. 总体数据流
 
@@ -748,32 +759,236 @@ approved/executing -> rolled_back
 5. 把旧 SSH `parsed_json` 的双重编码在采集迁移阶段修复；
 6. 写入 `schema_migrations` 版本 4。
 
-升级前自动创建 `<db>.pre-v4-<timestamp>.bak`。迁移不删除旧表：
+二期升级到 v4 前自动创建 `<db>.pre-v4-<timestamp>.bak`。迁移不删除旧表：
 `devices_legacy`、`collection_records_legacy`、旧 `diagnosis_records` 和
 `manual_actions` 都保留用于对照审计。
 
-## 12. 索引与后续阶段
+## 12. 三期知识库版本、索引与评测
 
-二期新增索引重点覆盖：
+三期把知识库从“Chroma 中的一个集合”拆成“来源 -> 文章 -> 文章版本 ->
+可检索片段 -> 索引版本”的链路。诊断检索命中的 `kb_chunks` 可以回到文章版本和
+来源；检索命中本身仍保存在 `retrieval_hits`，不会因文章后续修改而丢失历史依据。
 
-```text
-agent_messages(session_id, seq_no)
-context_snapshots(session_id, created_at_utc DESC)
-tool_calls(session_id, started_at_utc DESC)
-model_calls(session_id, created_at_utc DESC)
-retrieval_hits(query_id, rank_no)
-change_requests(device_id, status, updated_at_utc DESC)
-change_steps(change_id, seq_no)
-change_events(change_id, created_at_utc)
-command_executions(step_id, created_at_utc DESC)
-rechecks(change_id, executed_at_utc DESC)
+```mermaid
+erDiagram
+    KNOWLEDGE_SOURCES ||--o{ KNOWLEDGE_ARTICLE_VERSIONS : "来源"
+    KNOWLEDGE_ARTICLES ||--o{ KNOWLEDGE_ARTICLE_VERSIONS : "文章版本"
+    KNOWLEDGE_ARTICLE_VERSIONS ||--o{ KB_CHUNKS : "检索片段"
+    EMBEDDING_MODELS ||--o{ KNOWLEDGE_INDEX_VERSIONS : "模型"
+    KNOWLEDGE_INDEX_VERSIONS ||--o{ KB_CHUNKS : "索引发布"
+    RETRIEVAL_QUERIES ||--o{ RETRIEVAL_HITS : "查询命中"
+    KB_CHUNKS ||--o{ RETRIEVAL_HITS : "命中片段"
+
+    KNOWLEDGE_SOURCES {
+        text source_id PK
+        text source_key UK
+        text title
+        text publisher
+        text source_url
+        text edition
+        text license
+        text retrieved_at_utc
+    }
+
+    KNOWLEDGE_ARTICLES {
+        text article_id PK
+        text doc_id UK
+        text title
+        text category
+    }
+
+    KNOWLEDGE_ARTICLE_VERSIONS {
+        text article_version_id PK
+        text article_id FK
+        text version_label
+        text source_id FK
+        text applicable_device
+        text applicable_platform
+        text content
+        text content_hash
+        text status "active/retired/draft"
+    }
+
+    EMBEDDING_MODELS {
+        text model_id PK
+        text model_name
+        int dimension
+        text runtime
+        text cache_ref
+    }
+
+    KNOWLEDGE_INDEX_VERSIONS {
+        text index_version_id PK
+        text index_name
+        text collection_name
+        text embedding_model_id FK
+        int article_count
+        text content_hash
+        text status "building/ready/failed/retired"
+        int is_active
+        text error_message
+        text built_at_utc
+    }
 ```
 
-后续仍建议增加：
+构建 `python -m knowledge_base.build_index --rebuild` 时：
 
-- `test_suites`、`test_cases`、`fault_injections`、`experiment_runs`、
-  `experiment_results`：故障注入和知识库对比评测；
-- 知识文章版本、来源 URL、适用平台和嵌入模型索引版本；
-- 用户、角色、审批权限和密钥 Vault 引用；
-- 生命周期归档、原始输出保留期限和对象存储；
-- 多用户并发写时的 PostgreSQL/JSONB 迁移。
+1. `db.sync_knowledge_catalog()` 同步来源、文章和版本；
+2. `db.begin_knowledge_index()` 创建 `building` 索引版本；
+3. Chroma 写入成功后才调用 `db.finish_knowledge_index(status='ready')`；
+4. 新索引发布时旧索引 `is_active=0`，新索引成为当前检索来源；
+5. 构建失败时索引状态为 `failed`，旧索引不被替换；
+6. `retrieval_hits` 保存 `article_version_id`、`index_version_id` 和 `source_url`。
+
+### 12.1 评测实验
+
+```mermaid
+erDiagram
+    TEST_SUITES ||--o{ TEST_CASES : "测试集"
+    TEST_CASES ||--o{ FAULT_INJECTIONS : "故障注入"
+    TEST_SUITES ||--o{ EXPERIMENT_RUNS : "实验"
+    EXPERIMENT_RUNS ||--o{ EXPERIMENT_RESULTS : "逐案例结果"
+    TEST_CASES ||--o{ EXPERIMENT_RESULTS : "案例"
+
+    TEST_CASES {
+        text case_id PK
+        text suite_id FK
+        text external_id
+        text category
+        text question
+        text expected_json
+        text fixture_json
+        text expected_notes
+        int active
+    }
+
+    FAULT_INJECTIONS {
+        text injection_id PK
+        text case_id FK
+        text device_id FK
+        text fault_type
+        text injection_mode "synthetic/live"
+        text description
+        text status
+        text injected_at_utc
+        text verified_at_utc
+    }
+
+    EXPERIMENT_RUNS {
+        text experiment_id PK
+        text suite_id FK
+        text model_id
+        text provider
+        text prompt_version_id FK
+        text kb_index_version_id FK
+        text status
+        text summary_json
+    }
+
+    EXPERIMENT_RESULTS {
+        text result_id PK
+        text experiment_id FK
+        text case_id FK
+        int kb_enabled
+        text evidence_hash
+        text correctness "correct/partial/wrong/error/skipped"
+        real correctness_score
+        real executability_score
+        int llm_response_time_ms
+        int total_response_time_ms
+        text evaluation_json
+    }
+```
+
+评测脚本 `python -m test_cases.compare_kb` 使用独立 scratch 证据库，避免清空真实
+采集证据；实验、用例、结果和汇总写入当前应用数据库。每个案例保存同一证据哈希，
+有/无知识库分别写入 `experiment_results.kb_enabled=1/0`。汇总包括准确率、
+可执行性、全链路耗时、错误分类和证据一致性。
+
+## 13. 三期权限、审计与保留策略
+
+### 13.1 角色和权限
+
+三期增加 `users`、`roles`、`permissions`、`user_roles`、`role_permissions`。
+默认种子：
+
+- `admin`：全部权限；
+- `operator`：创建变更、执行变更、读取审计；
+- `approver`：审批变更、读取审计；
+- `viewer`：读取审计。
+
+设置 `APP_RBAC_ENFORCE=true` 后，Web 审批和变更执行接口会校验
+`change.approve`、`change.execute` 等权限。默认关闭以兼容当前单 Token 实验环境；
+用户身份仍由现有 Token 边界提供，不能把自由文本 `operator` 当成强身份认证。
+
+### 13.2 审计
+
+`audit_log` 记录操作者、动作、目标对象、请求 ID 和 JSON 详情。覆盖诊断、变更创建、
+审批、备份、命令执行、物理操作、复测、完成、报告导出、知识索引和评测运行。
+审计日志只追加，不参与自动清理；对应保留策略默认是 `dry_run`。
+
+### 13.3 保留策略
+
+```sql
+retention_policies(
+  policy_id, name, target_table, age_days,
+  action, enabled, config_json
+)
+
+maintenance_runs(
+  run_id, job_type, status, started_at_utc,
+  finished_at_utc, summary_json, created_by
+)
+```
+
+默认策略：
+
+- `health_checks` 保留 90 天，允许删除；
+- 孤立 `raw_blobs` 保留 180 天，只删除没有任何业务引用的内容；
+- `audit_log` 保留 365 天，但只做 dry-run 统计。
+
+执行：
+
+```bash
+python -m collector.retention
+python -m collector.retention --apply
+```
+
+默认命令只统计；`--apply` 才会删除允许清理的数据。执行摘要写入
+`maintenance_runs` 并产生审计事件。
+
+## 14. 三期迁移、索引与后续事项
+
+`db.init_db()` 在版本低于 5 时执行：
+
+1. 创建知识来源、文章版本、embedding 和索引版本表；
+2. 创建测试集、用例、故障注入、实验和结果表；
+3. 创建用户、角色、权限和保留策略表；
+4. 为 `kb_chunks`、`retrieval_hits`、`retrieval_queries` 和
+   `diagnosis_records` 补充三期索引/版本字段；
+5. 种子 `admin/system` 用户和默认保留策略；
+6. 写入 `schema_migrations` 版本 5。
+
+升级前生成 `<db>.pre-v5-<timestamp>.bak`。旧表、旧兼容视图和旧诊断/人工记录不删除。
+
+三期新增索引重点：
+
+```text
+knowledge_article_versions(article_id, created_at_utc DESC)
+knowledge_index_versions(index_name, is_active, created_at_utc DESC)
+test_cases(suite_id, external_id)
+fault_injections(case_id, created_at_utc DESC)
+experiment_runs(suite_id, started_at_utc DESC)
+experiment_results(experiment_id, case_id, kb_enabled)
+experiment_results(experiment_id, correctness)
+audit_log(actor, created_at_utc DESC)
+maintenance_runs(job_type, started_at_utc DESC)
+```
+
+仍建议后续实施：
+
+- 多用户 Token/OIDC 身份源和真正的审批人身份绑定；
+- PostgreSQL/JSONB、对象存储和大规模并发写入；
+- 真实 EVE-NG 故障注入执行器，把 `fault_injections.injection_mode='live'`
+  与前后配置哈希、现场验证人绑定；
+- 对原始配置、日志和证据实施加密、归档和更细粒度保留策略。

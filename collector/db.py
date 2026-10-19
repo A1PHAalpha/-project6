@@ -15,6 +15,16 @@
     change_requests / change_steps / change_events
       -> command_executions / physical_actions / config_backups / rechecks
 
+三期增加：
+
+    knowledge_sources / knowledge_articles / knowledge_article_versions
+      -> knowledge_index_versions / kb_chunks -> retrieval_hits
+
+    test_suites / test_cases / fault_injections
+      -> experiment_runs -> experiment_results
+
+    users / roles / permissions / retention_policies / maintenance_runs
+
 旧 ``collection_records`` 表会在首次迁移时保留为
 ``collection_records_legacy``，并创建同名兼容视图，避免现有页面和诊断
 代码立即失效。
@@ -37,7 +47,7 @@ load_project_env()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = os.getenv("SQLITE_DB_PATH") or str(PROJECT_ROOT / "data" / "ops.db")
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 BASE_SCHEMA = """
@@ -749,6 +759,232 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created
     ON audit_log(created_at_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_session
     ON reports(session_id, generated_at_utc DESC);
+"""
+
+
+PHASE3_SCHEMA = """
+CREATE TABLE IF NOT EXISTS knowledge_sources (
+    source_id TEXT PRIMARY KEY,
+    source_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    publisher TEXT,
+    source_url TEXT,
+    edition TEXT,
+    license TEXT,
+    retrieved_at_utc TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_articles (
+    article_id TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    category TEXT,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_article_versions (
+    article_version_id TEXT PRIMARY KEY,
+    article_id TEXT NOT NULL REFERENCES knowledge_articles(article_id) ON DELETE CASCADE,
+    version_label TEXT NOT NULL,
+    source_id TEXT REFERENCES knowledge_sources(source_id),
+    applicable_device TEXT,
+    applicable_platform TEXT,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'retired', 'draft')),
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (article_id, version_label, content_hash)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_models (
+    model_id TEXT PRIMARY KEY,
+    model_name TEXT NOT NULL,
+    dimension INTEGER,
+    runtime TEXT NOT NULL,
+    cache_ref TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (model_name, runtime)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_index_versions (
+    index_version_id TEXT PRIMARY KEY,
+    index_name TEXT NOT NULL,
+    collection_name TEXT NOT NULL,
+    embedding_model_id TEXT REFERENCES embedding_models(model_id),
+    chroma_path TEXT,
+    article_count INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'building'
+        CHECK (status IN ('building', 'ready', 'failed', 'retired')),
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    error_message TEXT,
+    built_at_utc TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled')),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS roles (
+    role_id TEXT PRIMARY KEY,
+    role_name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS permissions (
+    permission_id TEXT PRIMARY KEY,
+    permission_code TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role_id TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+    granted_at_utc TEXT NOT NULL,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+    permission_id TEXT NOT NULL REFERENCES permissions(permission_id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS test_suites (
+    suite_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    version TEXT NOT NULL DEFAULT '1',
+    created_by TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (name, version)
+);
+
+CREATE TABLE IF NOT EXISTS test_cases (
+    case_id TEXT PRIMARY KEY,
+    suite_id TEXT NOT NULL REFERENCES test_suites(suite_id) ON DELETE CASCADE,
+    external_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    question TEXT NOT NULL,
+    expected_json TEXT NOT NULL,
+    fixture_json TEXT,
+    expected_notes TEXT,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (suite_id, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS fault_injections (
+    injection_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES test_cases(case_id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(device_id),
+    fault_type TEXT NOT NULL,
+    injection_mode TEXT NOT NULL
+        CHECK (injection_mode IN ('synthetic', 'live')),
+    description TEXT,
+    before_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    after_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    injected_at_utc TEXT,
+    injected_by TEXT,
+    verified_at_utc TEXT,
+    status TEXT NOT NULL DEFAULT 'synthetic'
+        CHECK (status IN ('planned', 'injected', 'verified', 'failed', 'synthetic')),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS experiment_runs (
+    experiment_id TEXT PRIMARY KEY,
+    suite_id TEXT NOT NULL REFERENCES test_suites(suite_id),
+    model_id TEXT NOT NULL,
+    provider TEXT,
+    prompt_version_id TEXT REFERENCES prompt_versions(prompt_version_id),
+    kb_index_version_id TEXT REFERENCES knowledge_index_versions(index_version_id),
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+    started_at_utc TEXT NOT NULL,
+    finished_at_utc TEXT,
+    summary_json TEXT,
+    created_by TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS experiment_results (
+    result_id TEXT PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES experiment_runs(experiment_id) ON DELETE CASCADE,
+    case_id TEXT NOT NULL REFERENCES test_cases(case_id),
+    kb_enabled INTEGER NOT NULL CHECK (kb_enabled IN (0, 1)),
+    diagnosis_id INTEGER REFERENCES diagnosis_records(id),
+    conclusion_id TEXT REFERENCES diagnosis_conclusions(conclusion_id),
+    evidence_run_id TEXT REFERENCES collection_runs(run_id),
+    evidence_hash TEXT,
+    correctness TEXT NOT NULL
+        CHECK (correctness IN ('correct', 'partial', 'wrong', 'error', 'skipped')),
+    correctness_score REAL NOT NULL DEFAULT 0,
+    executability_score REAL NOT NULL DEFAULT 0,
+    llm_response_time_ms INTEGER,
+    total_response_time_ms INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    answer_json TEXT,
+    evaluation_json TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (experiment_id, case_id, kb_enabled)
+);
+
+CREATE TABLE IF NOT EXISTS retention_policies (
+    policy_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    target_table TEXT NOT NULL,
+    age_days INTEGER NOT NULL CHECK (age_days >= 0),
+    action TEXT NOT NULL DEFAULT 'dry_run'
+        CHECK (action IN ('dry_run', 'delete_orphan', 'delete')),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    config_json TEXT,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+    run_id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN ('running', 'success', 'failed')),
+    started_at_utc TEXT NOT NULL,
+    finished_at_utc TEXT,
+    summary_json TEXT,
+    created_by TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_article_versions
+    ON knowledge_article_versions(article_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_index_active
+    ON knowledge_index_versions(index_name, is_active, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_test_cases_suite
+    ON test_cases(suite_id, external_id);
+CREATE INDEX IF NOT EXISTS idx_fault_injections_case
+    ON fault_injections(case_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_experiment_runs_suite
+    ON experiment_runs(suite_id, started_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_experiment_results_run
+    ON experiment_results(experiment_id, case_id, kb_enabled);
+CREATE INDEX IF NOT EXISTS idx_experiment_results_correctness
+    ON experiment_results(experiment_id, correctness);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor
+    ON audit_log(actor, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_maintenance_runs_type
+    ON maintenance_runs(job_type, started_at_utc DESC);
 """
 
 
@@ -2266,6 +2502,166 @@ def _seed_command_policies(conn: sqlite3.Connection) -> None:
     )
 
 
+def _knowledge_publisher(source: str) -> str:
+    lowered = source.lower()
+    if "cisco" in lowered and "社区" in source:
+        return "Cisco Community"
+    if "cisco" in lowered:
+        return "Cisco"
+    return "通用/社区"
+
+
+def _knowledge_platform(applicable_device: str | None) -> str:
+    value = str(applicable_device or "")
+    if "Cisco" in value:
+        return "Cisco IOS / IOSvL2"
+    if "通用" in value:
+        return "通用"
+    return value or "未知"
+
+
+def _sync_knowledge_catalog_conn(
+    conn: sqlite3.Connection,
+    articles: list[dict],
+    *,
+    retrieved_at_utc: str | None = None,
+) -> dict[str, dict]:
+    """同步知识文章、来源和版本，返回 doc_id -> 版本元数据。"""
+    result: dict[str, dict] = {}
+    timestamp = now_iso()
+    retrieved = retrieved_at_utc or timestamp
+    for article in articles:
+        if not isinstance(article, dict):
+            continue
+        doc_id = str(article.get("id") or "").strip()
+        if not doc_id:
+            continue
+        title = str(article.get("title") or doc_id)
+        category = article.get("category")
+        source_title = str(article.get("source") or "未记录来源")
+        version_label = str(article.get("version") or "unknown")
+        content = str(article.get("content") or "")
+        applicable_device = article.get("applicable_device")
+        applicable_platform = article.get("applicable_platform") or _knowledge_platform(
+            applicable_device
+        )
+        source_url = article.get("source_url")
+        edition = article.get("edition") or version_label
+        license_name = article.get("license")
+        source_key = _sha256(source_title)[:24]
+        source_id = _stable_id("kbsrc", source_key)
+        conn.execute(
+            """INSERT INTO knowledge_sources
+               (source_id, source_key, title, publisher, source_url, edition,
+                license, retrieved_at_utc, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source_key) DO UPDATE SET
+                 title=excluded.title,
+                 publisher=excluded.publisher,
+                 source_url=COALESCE(excluded.source_url, knowledge_sources.source_url),
+                 edition=excluded.edition,
+                 license=COALESCE(excluded.license, knowledge_sources.license),
+                 retrieved_at_utc=excluded.retrieved_at_utc""",
+            (
+                source_id,
+                source_key,
+                source_title,
+                _knowledge_publisher(source_title),
+                source_url,
+                edition,
+                license_name,
+                retrieved,
+                timestamp,
+            ),
+        )
+
+        article_id = _stable_id("kbart", doc_id)
+        conn.execute(
+            """INSERT INTO knowledge_articles
+               (article_id, doc_id, title, category, created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(doc_id) DO UPDATE SET
+                 title=excluded.title,
+                 category=excluded.category,
+                 updated_at_utc=excluded.updated_at_utc""",
+            (article_id, doc_id, title, category, timestamp, timestamp),
+        )
+
+        content_hash = _sha256(
+            json.dumps(
+                {
+                    "title": title,
+                    "content": content,
+                    "source": source_title,
+                    "version": version_label,
+                    "applicable_device": applicable_device,
+                    "applicable_platform": applicable_platform,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        article_version_id = _stable_id(
+            "kbver", f"{doc_id}:{version_label}:{content_hash}"
+        )
+        conn.execute(
+            """INSERT INTO knowledge_article_versions
+               (article_version_id, article_id, version_label, source_id,
+                applicable_device, applicable_platform, content, content_hash,
+                status, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+               ON CONFLICT(article_id, version_label, content_hash) DO UPDATE SET
+                 source_id=excluded.source_id,
+                 applicable_device=excluded.applicable_device,
+                 applicable_platform=excluded.applicable_platform,
+                 status='active'""",
+            (
+                article_version_id,
+                article_id,
+                version_label,
+                source_id,
+                applicable_device,
+                applicable_platform,
+                content,
+                content_hash,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """UPDATE knowledge_article_versions
+               SET status='retired'
+               WHERE article_id=? AND article_version_id<>? AND status='active'""",
+            (article_id, article_version_id),
+        )
+        result[doc_id] = {
+            "doc_id": doc_id,
+            "article_id": article_id,
+            "article_version_id": article_version_id,
+            "source_id": source_id,
+            "source_url": source_url,
+            "applicable_platform": applicable_platform,
+            "content_hash": content_hash,
+            "version_label": version_label,
+        }
+        conn.execute(
+            """UPDATE kb_chunks
+               SET article_version_id=?, source_id=?, source_url=?,
+                   applicable_platform=?, chunk_no=COALESCE(chunk_no, 1),
+                   content_hash=?, is_active=1
+               WHERE index_name='ops_knowledge_base' AND doc_id=? AND version=?""",
+            (
+                article_version_id,
+                source_id,
+                source_url,
+                applicable_platform,
+                content_hash,
+                doc_id,
+                version_label,
+            ),
+        )
+    return result
+
+
 def _seed_kb_chunks(conn: sqlite3.Connection) -> None:
     """把当前知识库文章固化到关系表，供历史检索结果回看。"""
     articles_path = PROJECT_ROOT / "knowledge_base" / "articles.json"
@@ -2278,6 +2674,13 @@ def _seed_kb_chunks(conn: sqlite3.Connection) -> None:
     articles = payload.get("articles", payload) if isinstance(payload, dict) else payload
     if not isinstance(articles, list):
         return
+    catalog = _sync_knowledge_catalog_conn(conn, articles)
+    active_index = conn.execute(
+        """SELECT index_version_id FROM knowledge_index_versions
+           WHERE index_name='ops_knowledge_base' AND is_active=1
+           ORDER BY created_at_utc DESC LIMIT 1"""
+    ).fetchone()
+    index_version_id = active_index[0] if active_index else None
     for article in articles:
         doc_id = str(article.get("id") or "").strip()
         if not doc_id:
@@ -2297,18 +2700,29 @@ def _seed_kb_chunks(conn: sqlite3.Connection) -> None:
             )
         )
         chunk_id = _stable_id("kbchunk", f"ops_knowledge_base:{doc_id}:{version}")
+        meta = catalog.get(doc_id, {})
+        digest = meta.get("content_hash") or digest
         conn.execute(
             """INSERT INTO kb_chunks
                (chunk_id, index_name, doc_id, title, category, applicable_device,
-                version, source, content, content_hash, created_at_utc)
-               VALUES (?, 'ops_knowledge_base', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                version, source, content, content_hash, created_at_utc,
+                article_version_id, source_id, index_version_id,
+                applicable_platform, source_url, chunk_no, is_active)
+               VALUES (?, 'ops_knowledge_base', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, 1, 1)
                ON CONFLICT(index_name, doc_id, version) DO UPDATE SET
                  title=excluded.title,
                  category=excluded.category,
                  applicable_device=excluded.applicable_device,
                  source=excluded.source,
                  content=excluded.content,
-                 content_hash=excluded.content_hash""",
+                 content_hash=excluded.content_hash,
+                 article_version_id=excluded.article_version_id,
+                 source_id=excluded.source_id,
+                 index_version_id=excluded.index_version_id,
+                 applicable_platform=excluded.applicable_platform,
+                 source_url=excluded.source_url,
+                 is_active=1""",
             (
                 chunk_id,
                 doc_id,
@@ -2320,6 +2734,11 @@ def _seed_kb_chunks(conn: sqlite3.Connection) -> None:
                 content,
                 digest,
                 now_iso(),
+                meta.get("article_version_id"),
+                meta.get("source_id"),
+                index_version_id,
+                meta.get("applicable_platform"),
+                meta.get("source_url"),
             ),
         )
 
@@ -2407,6 +2826,153 @@ def _ensure_phase2_columns(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "diagnosis_records", "kb_status", "TEXT")
     _ensure_column(conn, "diagnosis_records", "total_response_time_ms", "INTEGER")
+
+
+def _ensure_phase3_columns(conn: sqlite3.Connection) -> None:
+    """为二期表补充三期需要保留的知识版本和索引来源字段。"""
+    _ensure_column(
+        conn, "kb_chunks", "article_version_id",
+        "TEXT REFERENCES knowledge_article_versions(article_version_id)",
+    )
+    _ensure_column(
+        conn, "kb_chunks", "source_id",
+        "TEXT REFERENCES knowledge_sources(source_id)",
+    )
+    _ensure_column(
+        conn, "kb_chunks", "index_version_id",
+        "TEXT REFERENCES knowledge_index_versions(index_version_id)",
+    )
+    _ensure_column(conn, "kb_chunks", "applicable_platform", "TEXT")
+    _ensure_column(conn, "kb_chunks", "source_url", "TEXT")
+    _ensure_column(conn, "kb_chunks", "chunk_no", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(
+        conn, "kb_chunks", "is_active", "INTEGER NOT NULL DEFAULT 1"
+    )
+    _ensure_column(
+        conn, "retrieval_hits", "article_version_id",
+        "TEXT REFERENCES knowledge_article_versions(article_version_id)",
+    )
+    _ensure_column(
+        conn, "retrieval_hits", "index_version_id",
+        "TEXT REFERENCES knowledge_index_versions(index_version_id)",
+    )
+    _ensure_column(conn, "retrieval_hits", "source_url", "TEXT")
+    _ensure_column(
+        conn, "retrieval_queries", "index_version_id",
+        "TEXT REFERENCES knowledge_index_versions(index_version_id)",
+    )
+    _ensure_column(
+        conn, "diagnosis_records", "index_version_id",
+        "TEXT REFERENCES knowledge_index_versions(index_version_id)",
+    )
+    _ensure_column(conn, "knowledge_index_versions", "error_message", "TEXT")
+
+
+def _seed_phase3_defaults(conn: sqlite3.Connection) -> None:
+    """初始化最小角色、权限、用户和保留策略。"""
+    timestamp = now_iso()
+    roles = {
+        "admin": "系统管理员",
+        "operator": "运维操作员",
+        "approver": "变更审批人",
+        "viewer": "只读查看人",
+    }
+    permissions = {
+        "change.create": "创建人工变更",
+        "change.approve": "审批人工变更",
+        "change.execute": "执行和记录人工操作",
+        "knowledge.manage": "管理知识库与索引",
+        "evaluation.run": "运行评测实验",
+        "audit.read": "查看审计记录",
+    }
+    role_permissions = {
+        "admin": set(permissions),
+        "operator": {"change.create", "change.execute", "audit.read"},
+        "approver": {"change.approve", "audit.read"},
+        "viewer": {"audit.read"},
+    }
+    for role_name, description in roles.items():
+        conn.execute(
+            """INSERT OR IGNORE INTO roles
+               (role_id, role_name, description, created_at_utc)
+               VALUES (?, ?, ?, ?)""",
+            (_stable_id("role", role_name), role_name, description, timestamp),
+        )
+    for code, description in permissions.items():
+        conn.execute(
+            """INSERT OR IGNORE INTO permissions
+               (permission_id, permission_code, description, created_at_utc)
+               VALUES (?, ?, ?, ?)""",
+            (_stable_id("permission", code), code, description, timestamp),
+        )
+    for role_name, codes in role_permissions.items():
+        role_id = _stable_id("role", role_name)
+        for code in codes:
+            conn.execute(
+                """INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                   VALUES (?, ?)""",
+                (role_id, _stable_id("permission", code)),
+            )
+    users = {
+        "admin": ("系统管理员", "admin"),
+        "system": ("系统服务", "operator"),
+    }
+    for username, (display_name, role_name) in users.items():
+        user_id = _stable_id("user", username)
+        conn.execute(
+            """INSERT OR IGNORE INTO users
+               (user_id, username, display_name, status, created_at_utc)
+               VALUES (?, ?, ?, 'active', ?)""",
+            (user_id, username, display_name, timestamp),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO user_roles (user_id, role_id, granted_at_utc)
+               VALUES (?, ?, ?)""",
+            (user_id, _stable_id("role", role_name), timestamp),
+        )
+    policies = [
+        (
+            "health_checks_90d",
+            "健康检查保留90天",
+            "health_checks",
+            90,
+            "delete",
+            1,
+        ),
+        (
+            "orphan_blobs_180d",
+            "孤立原始内容保留180天",
+            "raw_blobs",
+            180,
+            "delete_orphan",
+            1,
+        ),
+        (
+            "audit_log_365d_dry_run",
+            "审计日志保留365天（仅检查）",
+            "audit_log",
+            365,
+            "dry_run",
+            1,
+        ),
+    ]
+    for name, label, target, age_days, action, enabled in policies:
+        conn.execute(
+            """INSERT OR IGNORE INTO retention_policies
+               (policy_id, name, target_table, age_days, action, enabled,
+                config_json, created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
+            (
+                _stable_id("retention", name),
+                label,
+                target,
+                age_days,
+                action,
+                enabled,
+                timestamp,
+                timestamp,
+            ),
+        )
 
 
 def _backfill_legacy_diagnoses(conn: sqlite3.Connection) -> None:
@@ -2935,6 +3501,15 @@ def _prepare_schema(conn: sqlite3.Connection) -> None:
                VALUES (4, 'phase2b_human_change_and_operations', ?)""",
             (now_iso(),),
         )
+    if _schema_version(conn) < 5:
+        conn.executescript(PHASE3_SCHEMA)
+        _ensure_phase3_columns(conn)
+        _seed_phase3_defaults(conn)
+        conn.execute(
+            """INSERT OR IGNORE INTO schema_migrations (version, name, applied_at_utc)
+               VALUES (5, 'phase3_knowledge_evaluation_and_governance', ?)""",
+            (now_iso(),),
+        )
     _seed_kb_chunks(conn)
     _seed_tool_registry(conn)
 
@@ -3018,6 +3593,27 @@ def _kb_chunk_for_hit_conn(conn: sqlite3.Connection, hit: dict) -> sqlite3.Row |
            ORDER BY created_at_utc DESC LIMIT 1""",
         (doc_id,),
     ).fetchone()
+
+
+def _row_value(row: sqlite3.Row | None, key: str, default=None):
+    if row is None or key not in row.keys():
+        return default
+    return row[key]
+
+
+def _existing_id_conn(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    value: str | None,
+) -> str | None:
+    if not value:
+        return None
+    row = conn.execute(
+        f'SELECT 1 FROM "{table}" WHERE "{column}"=? LIMIT 1',
+        (value,),
+    ).fetchone()
+    return value if row else None
 
 
 def save_diagnosis_run(
@@ -3165,12 +3761,26 @@ def save_diagnosis_run(
         normalized_kb_status = (
             kb_status if kb_status in ("success", "empty", "disabled", "error") else "error"
         )
+        kb_index_version_id = next(
+            (
+                hit.get("index_version_id")
+                for hit in (retrieved_docs or [])
+                if hit.get("index_version_id")
+            ),
+            None,
+        )
+        kb_index_version_id = _existing_id_conn(
+            conn,
+            "knowledge_index_versions",
+            "index_version_id",
+            kb_index_version_id,
+        )
         query_id = _new_id("retrieval")
         conn.execute(
             """INSERT INTO retrieval_queries
                (query_id, session_id, message_id, query_text, filters_json,
-                top_k, status, error_message, created_at_utc)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                top_k, index_version_id, status, error_message, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 query_id,
                 session_id,
@@ -3178,6 +3788,7 @@ def save_diagnosis_run(
                 question,
                 _json_text(retrieval_filters),
                 top_k,
+                kb_index_version_id,
                 normalized_kb_status,
                 kb_error,
                 timestamp,
@@ -3194,12 +3805,38 @@ def save_diagnosis_run(
             content_hash = (
                 chunk["content_hash"] if chunk else _sha256(str(content or ""))
             )
+            article_version_id = (
+                hit.get("article_version_id")
+                or _row_value(chunk, "article_version_id")
+            )
+            article_version_id = _existing_id_conn(
+                conn,
+                "knowledge_article_versions",
+                "article_version_id",
+                article_version_id,
+            )
+            index_version_id = (
+                hit.get("index_version_id")
+                or _row_value(chunk, "index_version_id")
+                or kb_index_version_id
+            )
+            index_version_id = _existing_id_conn(
+                conn,
+                "knowledge_index_versions",
+                "index_version_id",
+                index_version_id,
+            )
+            source_url = (
+                hit.get("source_url")
+                or _row_value(chunk, "source_url")
+            )
             conn.execute(
                 """INSERT INTO retrieval_hits
                    (hit_id, query_id, chunk_id, rank_no, distance, doc_id, title,
                     category, applicable_device, version, source, content,
-                    content_hash, created_at_utc)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    content_hash, article_version_id, index_version_id,
+                    source_url, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     hit_id,
                     query_id,
@@ -3215,6 +3852,9 @@ def save_diagnosis_run(
                     hit.get("source") or (chunk["source"] if chunk else None),
                     content,
                     content_hash,
+                    article_version_id,
+                    index_version_id,
+                    source_url,
                     timestamp,
                 ),
             )
@@ -3287,8 +3927,8 @@ def save_diagnosis_run(
                 retrieved_doc_ids_json, evidence_json, answer_json, use_kb,
                 response_time_ms, session_id, retrieval_query_id,
                 context_snapshot_id, model_call_id, kb_status,
-                total_response_time_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                total_response_time_ms, index_version_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 timestamp,
                 question,
@@ -3306,6 +3946,7 @@ def save_diagnosis_run(
                 model_call_id,
                 normalized_kb_status,
                 total_response_time_ms,
+                kb_index_version_id,
             ),
         )
         diagnosis_id = int(cur.lastrowid)
@@ -4511,6 +5152,612 @@ def list_health_checks(limit: int = 50) -> list[dict]:
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def sync_knowledge_catalog(
+    articles: list[dict],
+    *,
+    retrieved_at_utc: str | None = None,
+) -> dict[str, dict]:
+    """把文章、来源和版本写入三期知识目录，返回 doc_id 元数据。"""
+    init_db()
+    with get_conn() as conn:
+        return _sync_knowledge_catalog_conn(
+            conn,
+            articles,
+            retrieved_at_utc=retrieved_at_utc,
+        )
+
+
+def begin_knowledge_index(
+    *,
+    index_name: str,
+    collection_name: str,
+    model_name: str,
+    runtime: str = "fastembed-onnx",
+    dimension: int | None = None,
+    cache_ref: str | None = None,
+    chroma_path: str | None = None,
+    content_hash: str | None = None,
+) -> str:
+    """创建一次索引构建记录，成功后再由 finish_knowledge_index 发布。"""
+    init_db()
+    timestamp = now_iso()
+    model_id = _stable_id("embmodel", f"{runtime}:{model_name}")
+    index_version_id = _new_id("kbindex")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO embedding_models
+               (model_id, model_name, dimension, runtime, cache_ref, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(model_name, runtime) DO UPDATE SET
+                 dimension=COALESCE(excluded.dimension, embedding_models.dimension),
+                 cache_ref=COALESCE(excluded.cache_ref, embedding_models.cache_ref)""",
+            (model_id, model_name, dimension, runtime, cache_ref, timestamp),
+        )
+        conn.execute(
+            """INSERT INTO knowledge_index_versions
+               (index_version_id, index_name, collection_name, embedding_model_id,
+                chroma_path, article_count, content_hash, status, is_active,
+                error_message, built_at_utc, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, 0, ?, 'building', 0, NULL, NULL, ?)""",
+            (
+                index_version_id,
+                index_name,
+                collection_name,
+                model_id,
+                chroma_path,
+                content_hash,
+                timestamp,
+            ),
+        )
+    return index_version_id
+
+
+def finish_knowledge_index(
+    index_version_id: str,
+    *,
+    status: str,
+    article_count: int = 0,
+    content_hash: str | None = None,
+    error_message: str | None = None,
+) -> dict:
+    """发布或标记一次知识库索引构建。"""
+    if status not in ("ready", "failed", "retired"):
+        raise ValueError("status 必须是 ready、failed 或 retired")
+    init_db()
+    timestamp = now_iso()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM knowledge_index_versions WHERE index_version_id=?",
+            (index_version_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"知识库索引不存在: {index_version_id}")
+        index_name = row["index_name"]
+        conn.execute(
+            """UPDATE knowledge_index_versions
+               SET status=?, article_count=?, content_hash=COALESCE(?, content_hash),
+                   error_message=?, built_at_utc=?, is_active=?
+               WHERE index_version_id=?""",
+            (
+                status,
+                article_count,
+                content_hash,
+                error_message,
+                timestamp if status in ("ready", "failed") else row["built_at_utc"],
+                1 if status == "ready" else 0,
+                index_version_id,
+            ),
+        )
+        if status == "ready":
+            conn.execute(
+                """UPDATE knowledge_index_versions
+                   SET is_active=0,
+                       status=CASE WHEN status='ready' THEN 'retired' ELSE status END
+                   WHERE index_name=? AND index_version_id<>?""",
+                (index_name, index_version_id),
+            )
+            conn.execute(
+                "UPDATE kb_chunks SET is_active=0 WHERE index_name=?",
+                (index_name,),
+            )
+            conn.execute(
+                """UPDATE kb_chunks
+                   SET index_version_id=?, is_active=1
+                   WHERE index_name=?
+                     AND article_version_id IN (
+                         SELECT article_version_id FROM knowledge_article_versions
+                         WHERE status='active'
+                     )""",
+                (index_version_id, index_name),
+            )
+    return {
+        "index_version_id": index_version_id,
+        "index_name": index_name,
+        "status": status,
+        "article_count": article_count,
+        "content_hash": content_hash,
+        "error_message": error_message,
+    }
+
+
+def list_knowledge_indexes(
+    index_name: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    with get_conn() as conn:
+        sql = """SELECT kiv.*, em.model_name, em.dimension, em.runtime,
+                        em.cache_ref
+                 FROM knowledge_index_versions kiv
+                 LEFT JOIN embedding_models em
+                   ON em.model_id=kiv.embedding_model_id"""
+        params: list[Any] = []
+        if index_name:
+            sql += " WHERE kiv.index_name=?"
+            params.append(index_name)
+        sql += " ORDER BY kiv.created_at_utc DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_active_knowledge_index(index_name: str = "ops_knowledge_base") -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT kiv.*, em.model_name, em.dimension, em.runtime
+               FROM knowledge_index_versions kiv
+               LEFT JOIN embedding_models em
+                 ON em.model_id=kiv.embedding_model_id
+               WHERE kiv.index_name=? AND kiv.is_active=1
+               ORDER BY kiv.created_at_utc DESC LIMIT 1""",
+            (index_name,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def knowledge_catalog_summary() -> dict:
+    with get_conn() as conn:
+        counts = {
+            "sources": conn.execute("SELECT COUNT(*) FROM knowledge_sources").fetchone()[0],
+            "articles": conn.execute("SELECT COUNT(*) FROM knowledge_articles").fetchone()[0],
+            "active_versions": conn.execute(
+                "SELECT COUNT(*) FROM knowledge_article_versions WHERE status='active'"
+            ).fetchone()[0],
+            "chunks": conn.execute(
+                "SELECT COUNT(*) FROM kb_chunks WHERE is_active=1"
+            ).fetchone()[0],
+        }
+    return {
+        **counts,
+        "active_index": get_active_knowledge_index(),
+        "indexes": list_knowledge_indexes(limit=10),
+    }
+
+
+def user_has_permission(username: str, permission_code: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT 1
+               FROM users u
+               JOIN user_roles ur ON ur.user_id=u.user_id
+               JOIN role_permissions rp ON rp.role_id=ur.role_id
+               JOIN permissions p ON p.permission_id=rp.permission_id
+               WHERE u.username=? AND u.status='active' AND p.permission_code=?
+               LIMIT 1""",
+            (username, permission_code),
+        ).fetchone()
+    return row is not None
+
+
+def list_users() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT u.user_id, u.username, u.display_name, u.status,
+                      GROUP_CONCAT(r.role_name) AS roles
+               FROM users u
+               LEFT JOIN user_roles ur ON ur.user_id=u.user_id
+               LEFT JOIN roles r ON r.role_id=ur.role_id
+               GROUP BY u.user_id
+               ORDER BY u.username"""
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def record_audit_event(
+    *,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: str | None = None,
+    request_id: str | None = None,
+    details: dict | None = None,
+) -> str:
+    audit_id = _new_id("audit")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO audit_log
+               (audit_id, actor, action, target_type, target_id, request_id,
+                details_json, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                audit_id,
+                actor,
+                action,
+                target_type,
+                target_id,
+                request_id,
+                _json_text(details),
+                now_iso(),
+            ),
+        )
+    return audit_id
+
+
+def list_audit_log(
+    *,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    with get_conn() as conn:
+        sql = "SELECT * FROM audit_log"
+        clauses = []
+        params: list[Any] = []
+        if target_type:
+            clauses.append("target_type=?")
+            params.append(target_type)
+        if target_id:
+            clauses.append("target_id=?")
+            params.append(target_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at_utc DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        {
+            **dict(row),
+            "details": _json_value(row["details_json"]),
+        }
+        for row in rows
+    ]
+
+
+def list_retention_policies() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM retention_policies ORDER BY name"
+        ).fetchall()
+    policies = []
+    for row in rows:
+        item = dict(row)
+        item["config"] = _json_value(item.pop("config_json", None))
+        policies.append(item)
+    return policies
+
+
+def start_maintenance_run(job_type: str, *, created_by: str = "system") -> str:
+    run_id = _new_id("maint")
+    timestamp = now_iso()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO maintenance_runs
+               (run_id, job_type, status, started_at_utc, finished_at_utc,
+                summary_json, created_by, created_at_utc)
+               VALUES (?, ?, 'running', ?, NULL, NULL, ?, ?)""",
+            (run_id, job_type, timestamp, created_by, timestamp),
+        )
+    return run_id
+
+
+def finish_maintenance_run(
+    run_id: str,
+    *,
+    status: str,
+    summary: dict | None = None,
+) -> dict:
+    if status not in ("success", "failed"):
+        raise ValueError("status 必须是 success 或 failed")
+    timestamp = now_iso()
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE maintenance_runs
+               SET status=?, finished_at_utc=?, summary_json=?
+               WHERE run_id=?""",
+            (status, timestamp, _json_text(summary), run_id),
+        )
+    return {"run_id": run_id, "status": status, "summary": summary}
+
+
+def upsert_test_suite(
+    name: str,
+    *,
+    description: str | None = None,
+    version: str = "1",
+    created_by: str = "system",
+) -> str:
+    suite_id = _stable_id("suite", f"{name}:{version}")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO test_suites
+               (suite_id, name, description, version, created_by, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(suite_id) DO UPDATE SET
+                 description=excluded.description""",
+            (suite_id, name, description, version, created_by, now_iso()),
+        )
+    return suite_id
+
+
+def upsert_test_case(
+    suite_id: str,
+    *,
+    external_id: str,
+    category: str,
+    question: str,
+    expected: dict,
+    fixture: dict | list | None = None,
+    expected_notes: str | None = None,
+) -> str:
+    case_id = _stable_id("case", f"{suite_id}:{external_id}")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO test_cases
+               (case_id, suite_id, external_id, category, question,
+                expected_json, fixture_json, expected_notes, active, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT(suite_id, external_id) DO UPDATE SET
+                 category=excluded.category,
+                 question=excluded.question,
+                 expected_json=excluded.expected_json,
+                 fixture_json=excluded.fixture_json,
+                 expected_notes=excluded.expected_notes,
+                 active=1""",
+            (
+                case_id,
+                suite_id,
+                external_id,
+                category,
+                question,
+                _json_text(expected),
+                _json_text(fixture),
+                expected_notes,
+                now_iso(),
+            ),
+        )
+    return case_id
+
+
+def register_fault_injection(
+    case_id: str,
+    *,
+    fault_type: str,
+    injection_mode: str = "synthetic",
+    device_id: str | None = None,
+    description: str | None = None,
+    injected_by: str = "evaluation",
+    status: str = "synthetic",
+) -> str:
+    if injection_mode not in ("synthetic", "live"):
+        raise ValueError("injection_mode 必须是 synthetic 或 live")
+    if status not in ("planned", "injected", "verified", "failed", "synthetic"):
+        raise ValueError("status 不合法")
+    injection_id = _new_id("fault")
+    timestamp = now_iso()
+    with get_conn() as conn:
+        if injection_mode == "synthetic":
+            existing = conn.execute(
+                """SELECT injection_id FROM fault_injections
+                   WHERE case_id=? AND injection_mode='synthetic' AND fault_type=?
+                   LIMIT 1""",
+                (case_id, fault_type),
+            ).fetchone()
+            if existing:
+                return existing[0]
+        conn.execute(
+            """INSERT INTO fault_injections
+               (injection_id, case_id, device_id, fault_type, injection_mode,
+                description, before_blob_id, after_blob_id, injected_at_utc,
+                injected_by, verified_at_utc, status, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)""",
+            (
+                injection_id,
+                case_id,
+                device_id,
+                fault_type,
+                injection_mode,
+                description,
+                timestamp if injection_mode == "live" else None,
+                injected_by,
+                status,
+                timestamp,
+            ),
+        )
+    return injection_id
+
+
+def start_experiment_run(
+    suite_id: str,
+    *,
+    model_id: str,
+    provider: str | None = None,
+    prompt_version_id: str | None = None,
+    kb_index_version_id: str | None = None,
+    created_by: str = "evaluation",
+) -> str:
+    experiment_id = _new_id("experiment")
+    timestamp = now_iso()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO experiment_runs
+               (experiment_id, suite_id, model_id, provider, prompt_version_id,
+                kb_index_version_id, status, started_at_utc, finished_at_utc,
+                summary_json, created_by, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, 'running', ?, NULL, NULL, ?, ?)""",
+            (
+                experiment_id,
+                suite_id,
+                model_id,
+                provider,
+                prompt_version_id,
+                kb_index_version_id,
+                timestamp,
+                created_by,
+                timestamp,
+            ),
+        )
+    return experiment_id
+
+
+def record_experiment_result(
+    experiment_id: str,
+    case_id: str,
+    *,
+    kb_enabled: bool,
+    correctness: str,
+    correctness_score: float,
+    executability_score: float,
+    diagnosis_id: int | None = None,
+    conclusion_id: str | None = None,
+    evidence_run_id: str | None = None,
+    evidence_hash: str | None = None,
+    llm_response_time_ms: int | None = None,
+    total_response_time_ms: int | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    answer: dict | None = None,
+    evaluation: dict | None = None,
+) -> str:
+    if correctness not in ("correct", "partial", "wrong", "error", "skipped"):
+        raise ValueError("correctness 不合法")
+    result_id = _stable_id(
+        "expresult", f"{experiment_id}:{case_id}:{1 if kb_enabled else 0}"
+    )
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO experiment_results
+               (result_id, experiment_id, case_id, kb_enabled, diagnosis_id,
+                conclusion_id, evidence_run_id, evidence_hash, correctness,
+                correctness_score, executability_score, llm_response_time_ms,
+                total_response_time_ms, error_code, error_message,
+                answer_json, evaluation_json, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(experiment_id, case_id, kb_enabled) DO UPDATE SET
+                 diagnosis_id=excluded.diagnosis_id,
+                 conclusion_id=excluded.conclusion_id,
+                 evidence_run_id=excluded.evidence_run_id,
+                 evidence_hash=excluded.evidence_hash,
+                 correctness=excluded.correctness,
+                 correctness_score=excluded.correctness_score,
+                 executability_score=excluded.executability_score,
+                 llm_response_time_ms=excluded.llm_response_time_ms,
+                 total_response_time_ms=excluded.total_response_time_ms,
+                 error_code=excluded.error_code,
+                 error_message=excluded.error_message,
+                 answer_json=excluded.answer_json,
+                 evaluation_json=excluded.evaluation_json""",
+            (
+                result_id,
+                experiment_id,
+                case_id,
+                1 if kb_enabled else 0,
+                diagnosis_id,
+                conclusion_id,
+                evidence_run_id,
+                evidence_hash,
+                correctness,
+                correctness_score,
+                executability_score,
+                llm_response_time_ms,
+                total_response_time_ms,
+                error_code,
+                error_message,
+                _json_text(answer or {}),
+                _json_text(evaluation or {}),
+                now_iso(),
+            ),
+        )
+    return result_id
+
+
+def finish_experiment_run(
+    experiment_id: str,
+    *,
+    status: str = "completed",
+    summary: dict | None = None,
+) -> dict:
+    if status not in ("completed", "failed", "cancelled"):
+        raise ValueError("status 不合法")
+    timestamp = now_iso()
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE experiment_runs
+               SET status=?, finished_at_utc=?, summary_json=?
+               WHERE experiment_id=?""",
+            (status, timestamp, _json_text(summary), experiment_id),
+        )
+    return {
+        "experiment_id": experiment_id,
+        "status": status,
+        "finished_at_utc": timestamp,
+        "summary": summary,
+    }
+
+
+def list_experiments(limit: int = 50) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT er.*, ts.name AS suite_name,
+                      (SELECT COUNT(*) FROM experiment_results x
+                       WHERE x.experiment_id=er.experiment_id) AS result_count
+               FROM experiment_runs er
+               JOIN test_suites ts ON ts.suite_id=er.suite_id
+               ORDER BY er.started_at_utc DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            **dict(row),
+            "summary": _json_value(row["summary_json"]),
+        }
+        for row in rows
+    ]
+
+
+def get_experiment(experiment_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT er.*, ts.name AS suite_name, ts.description AS suite_description
+               FROM experiment_runs er
+               JOIN test_suites ts ON ts.suite_id=er.suite_id
+               WHERE er.experiment_id=?""",
+            (experiment_id,),
+        ).fetchone()
+        if not row:
+            return None
+        results = conn.execute(
+            """SELECT xr.*, tc.external_id, tc.category, tc.question,
+                      tc.expected_json, tc.expected_notes
+               FROM experiment_results xr
+               JOIN test_cases tc ON tc.case_id=xr.case_id
+               WHERE xr.experiment_id=?
+               ORDER BY tc.external_id, xr.kb_enabled DESC""",
+            (experiment_id,),
+        ).fetchall()
+    result_items = []
+    for result in results:
+        item = dict(result)
+        item["expected"] = _json_value(item.pop("expected_json", None))
+        item["answer"] = _json_value(item.pop("answer_json", None))
+        item["evaluation"] = _json_value(item.pop("evaluation_json", None))
+        result_items.append(item)
+    payload = {
+        **dict(row),
+        "summary": _json_value(row["summary_json"]),
+        "results": result_items,
+    }
+    return payload
 
 
 def insert_manual_action(diagnosis_id, operator, action_desc, backup_ref,

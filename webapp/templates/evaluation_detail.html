@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>评测详情 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
+        <a href="/evaluations">效果评测</a>
+        <a href="/knowledge">知识库</a>
+    </nav>
+</header>
+<main>
+    {% if error %}
+    <div class="card"><p style="color:#c22;">{{ error }}</p></div>
+    {% else %}
+    <div class="section-title">评测 {{ experiment.experiment_id }}</div>
+    <div class="card">
+        <p><strong>{{ experiment.suite_name }}</strong>
+            <span class="badge">{{ experiment.status }}</span>
+        </p>
+        <p class="muted">
+            模型: {{ experiment.model_id }} | Provider: {{ experiment.provider or '未记录' }}
+            | 索引版本: {{ experiment.kb_index_version_id or '未记录' }}
+            | 开始: {{ experiment.started_at_utc }}
+        </p>
+        {% set summary = experiment.summary or {} %}
+        {% if summary.by_variant %}
+        <table>
+            <thead><tr><th>模式</th><th>样本</th><th>准确率</th><th>可执行性</th><th>平均耗时</th><th>正确/部分/错误/异常</th></tr></thead>
+            <tbody>
+            {% for key, label in [('with_kb', '有知识库'), ('without_kb', '无知识库')] %}
+                {% set v = summary.by_variant.get(key, {}) %}
+                <tr>
+                    <td>{{ label }}</td>
+                    <td>{{ v.get('total', 0) }}</td>
+                    <td>{{ '%.2f%%'|format((v.get('accuracy', 0) * 100)) }}</td>
+                    <td>{{ '%.2f'|format(v.get('avg_executability', 0)) }}</td>
+                    <td>{{ v.get('avg_total_response_time_ms') or 'N/A' }} ms</td>
+                    <td>{{ v.get('correct', 0) }}/{{ v.get('partial', 0) }}/{{ v.get('wrong', 0) }}/{{ v.get('error', 0) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p class="muted">
+            同一证据全部一致: {{ summary.same_evidence_all_cases }}
+            | 准确率差值: {{ summary.comparison.get('accuracy_delta', 0) }}
+            | 可执行性差值: {{ summary.comparison.get('executability_delta', 0) }}
+        </p>
+        {% endif %}
+    </div>
+
+    <div class="section-title">逐案例结果</div>
+    <div class="card">
+        <table>
+            <thead><tr><th>案例</th><th>模式</th><th>判定</th><th>准确分</th><th>可执行分</th><th>耗时</th><th>错误</th></tr></thead>
+            <tbody>
+            {% for r in experiment.results %}
+            <tr>
+                <td>{{ r.external_id }}<br><span class="muted">{{ r.category }}</span></td>
+                <td>{{ '有知识库' if r.kb_enabled else '无知识库' }}</td>
+                <td><span class="badge">{{ r.correctness }}</span></td>
+                <td>{{ '%.2f'|format(r.correctness_score) }}</td>
+                <td>{{ '%.2f'|format(r.executability_score) }}</td>
+                <td>{{ r.total_response_time_ms or 'N/A' }} ms</td>
+                <td>{{ r.error_message or '' }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% for r in experiment.results %}
+    <div class="section-title">{{ r.external_id }} · {{ '有知识库' if r.kb_enabled else '无知识库' }}</div>
+    <div class="card">
+        <p><strong>问题：</strong>{{ r.question }}</p>
+        <p><strong>故障现象：</strong>{{ (r.answer or {}).get('fault_phenomenon', '') }}</p>
+        <p><strong>缺失信息：</strong>{{ (r.answer or {}).get('missing_information', '') }}</p>
+        <p><strong>评分依据：</strong>
+            {% if r.evaluation %}
+            命中 {{ r.evaluation.get('matched_terms', [])|join('、') or '无' }}；
+            缺失 {{ r.evaluation.get('missing_terms', [])|join('、') or '无' }}；
+            禁止断言 {{ r.evaluation.get('forbidden_hits', [])|join('、') or '无' }}
+            {% else %}未记录{% endif %}
+        </p>
+        {% if r.answer %}
+        <p><strong>可能原因：</strong></p>
+        <ul>
+        {% for c in r.answer.get('possible_causes', []) %}
+            <li>{{ c.get('cause', '') }}{% if c.get('kb_refs') %} ({{ c.get('kb_refs')|join(', ') }}){% endif %}</li>
+        {% endfor %}
+        </ul>
+        <p><strong>处理建议：</strong></p>
+        <ul>
+        {% for s in r.answer.get('fix_suggestions', []) %}
+            <li>{{ s.get('action', '') }} {% if s.get('requires_manual_confirmation') %}[需人工确认]{% endif %}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+</main>
+</body>
+</html>

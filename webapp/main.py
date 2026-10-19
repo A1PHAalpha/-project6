@@ -7,6 +7,8 @@ FastAPI Web 应用：企业网络智能运维诊断系统主入口。
 - GET  /diagnose               故障诊断页面
 - GET  /changes                人工变更列表
 - GET  /changes/{id}           人工变更详情
+- GET  /evaluations            评测实验列表
+- GET  /knowledge              知识库版本与索引状态
 - POST /api/diagnose            执行诊断（RAG）
 - GET  /api/diagnoses           历史诊断记录
 - GET  /api/sessions            诊断会话列表
@@ -15,6 +17,8 @@ FastAPI Web 应用：企业网络智能运维诊断系统主入口。
 - POST /api/changes/{id}/...    审批、步骤、备份、复测
 - POST /api/manual/confirm       旧版人工处理兼容入口
 - GET  /api/export/{diagnosis_id} 导出单次诊断报告
+- GET  /api/knowledge-base/status 知识库目录和索引状态
+- GET  /api/evaluations        评测实验与结果
 """
 import os
 import sys
@@ -69,6 +73,26 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 
+def _audit(actor: str, action: str, target_type: str, target_id: str | None = None, details: dict | None = None):
+    try:
+        db.record_audit_event(
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            details=details,
+        )
+    except Exception:
+        # 审计写入失败不应吞掉主业务结果；启动健康检查会暴露数据库异常。
+        pass
+
+
+def _require_permission(actor: str, permission: str) -> bool:
+    if not env_flag("APP_RBAC_ENFORCE", False):
+        return True
+    return db.user_has_permission(actor, permission)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     devices = db.list_devices()
@@ -106,6 +130,38 @@ def changes_page(request: Request):
     )
 
 
+@app.get("/evaluations", response_class=HTMLResponse)
+def evaluations_page(request: Request):
+    experiments = db.list_experiments(limit=50)
+    return templates.TemplateResponse(
+        "evaluations.html",
+        {"request": request, "experiments": experiments},
+    )
+
+
+@app.get("/evaluations/{experiment_id}", response_class=HTMLResponse)
+def evaluation_detail(request: Request, experiment_id: str):
+    experiment = db.get_experiment(experiment_id)
+    if not experiment:
+        return templates.TemplateResponse(
+            "evaluation_detail.html",
+            {"request": request, "experiment": None, "error": "未找到该评测实验"},
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        "evaluation_detail.html",
+        {"request": request, "experiment": experiment, "error": None},
+    )
+
+
+@app.get("/knowledge", response_class=HTMLResponse)
+def knowledge_page(request: Request):
+    return templates.TemplateResponse(
+        "knowledge.html",
+        {"request": request, "knowledge": db.knowledge_catalog_summary()},
+    )
+
+
 @app.get("/changes/{change_id}", response_class=HTMLResponse)
 def change_detail(request: Request, change_id: str):
     detail = db.get_change(change_id)
@@ -135,6 +191,17 @@ def api_diagnose(req: DiagnoseRequest):
         use_kb=req.use_kb,
         session_id=req.session_id,
         requested_by=req.requested_by,
+    )
+    _audit(
+        req.requested_by,
+        "diagnosis.run",
+        "diagnosis",
+        str(result.get("diagnosis_id")),
+        {
+            "session_id": result.get("session_id"),
+            "use_kb": req.use_kb,
+            "model_id": result.get("model_id"),
+        },
     )
     return JSONResponse(result)
 
@@ -177,6 +244,42 @@ def api_health():
         "system_status": db.list_system_status(),
         "checks": db.list_health_checks(limit=20),
     }
+
+
+@app.get("/api/knowledge-base/status")
+def api_knowledge_status():
+    return db.knowledge_catalog_summary()
+
+
+@app.get("/api/evaluations")
+def api_list_evaluations(limit: int = 50):
+    return db.list_experiments(limit=limit)
+
+
+@app.get("/api/evaluations/{experiment_id}")
+def api_get_evaluation(experiment_id: str):
+    experiment = db.get_experiment(experiment_id)
+    if not experiment:
+        return JSONResponse({"error": "未找到该评测实验"}, status_code=404)
+    return experiment
+
+
+@app.get("/api/audit")
+def api_list_audit(
+    target_type: str | None = None,
+    target_id: str | None = None,
+    limit: int = 100,
+):
+    return db.list_audit_log(
+        target_type=target_type,
+        target_id=target_id,
+        limit=limit,
+    )
+
+
+@app.get("/api/users")
+def api_list_users():
+    return db.list_users()
 
 
 class ToolInvokeRequest(BaseModel):
@@ -226,6 +329,8 @@ def api_create_change(req: ChangeCreateRequest):
             {"error": "变更必须关联一次诊断结论（diagnosis_id 或 conclusion_id）"},
             status_code=400,
         )
+    if not _require_permission(req.operator, "change.create"):
+        return JSONResponse({"error": "当前操作人没有创建变更权限"}, status_code=403)
     try:
         result = db.create_change_request(
             diagnosis_id=req.diagnosis_id,
@@ -243,6 +348,13 @@ def api_create_change(req: ChangeCreateRequest):
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(
+        req.operator,
+        "change.create",
+        "change",
+        result["change_id"],
+        {"device_name": req.device_name, "change_type": req.change_type},
+    )
     return result
 
 
@@ -294,8 +406,10 @@ class ChangeApprovalRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/approve")
 def api_approve_change(change_id: str, req: ChangeApprovalRequest):
+    if not _require_permission(req.approver, "change.approve"):
+        return JSONResponse({"error": "当前审批人没有审批权限"}, status_code=403)
     try:
-        return db.approve_change(
+        result = db.approve_change(
             change_id,
             approver=req.approver,
             decision=req.decision,
@@ -303,6 +417,14 @@ def api_approve_change(change_id: str, req: ChangeApprovalRequest):
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(
+        req.approver,
+        "change.approve",
+        "change",
+        change_id,
+        {"decision": req.decision, "comment": req.comment},
+    )
+    return result
 
 
 class ChangeOperatorRequest(BaseModel):
@@ -311,18 +433,25 @@ class ChangeOperatorRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/start")
 def api_start_change(change_id: str, req: ChangeOperatorRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
-        return db.start_change(change_id, operator=req.operator)
+        result = db.start_change(change_id, operator=req.operator)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.start", "change", change_id)
+    return result
 
 
 @app.post("/api/changes/{change_id}/backup")
 def api_backup_change(change_id: str, req: ChangeOperatorRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
         result = backup_change_config(change_id, req.operator)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.backup", "change", change_id, result)
     status_code = 200 if result.get("status") == "success" else 500
     return JSONResponse(result, status_code=status_code)
 
@@ -338,8 +467,10 @@ class CommandExecutionRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/steps/{step_id}/execute")
 def api_record_command(change_id: str, step_id: str, req: CommandExecutionRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
-        return record_manual_execution(
+        result = record_manual_execution(
             change_id,
             step_id,
             command_text=req.command_text,
@@ -351,6 +482,8 @@ def api_record_command(change_id: str, step_id: str, req: CommandExecutionReques
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.command_executed", "change", change_id, result)
+    return result
 
 
 class PhysicalActionRequest(BaseModel):
@@ -363,8 +496,10 @@ class PhysicalActionRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/steps/{step_id}/physical")
 def api_record_physical(change_id: str, step_id: str, req: PhysicalActionRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
-        return record_physical(
+        result = record_physical(
             change_id,
             step_id,
             action_type=req.action_type,
@@ -375,6 +510,8 @@ def api_record_physical(change_id: str, step_id: str, req: PhysicalActionRequest
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.physical_action", "change", change_id, result)
+    return result
 
 
 class ChangeRecheckRequest(BaseModel):
@@ -386,8 +523,10 @@ class ChangeRecheckRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/recheck")
 def api_change_recheck(change_id: str, req: ChangeRecheckRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
-        return run_change_recheck(
+        result = run_change_recheck(
             change_id,
             source_device_name=req.source_device_name,
             target_ip=req.target_ip,
@@ -396,6 +535,8 @@ def api_change_recheck(change_id: str, req: ChangeRecheckRequest):
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.recheck", "change", change_id, result)
+    return result
 
 
 class ChangeCompleteRequest(BaseModel):
@@ -405,10 +546,14 @@ class ChangeCompleteRequest(BaseModel):
 
 @app.post("/api/changes/{change_id}/complete")
 def api_complete_change(change_id: str, req: ChangeCompleteRequest):
+    if not _require_permission(req.operator, "change.execute"):
+        return JSONResponse({"error": "当前操作人没有执行权限"}, status_code=403)
     try:
-        return db.complete_change(change_id, operator=req.operator, outcome=req.outcome)
+        result = db.complete_change(change_id, operator=req.operator, outcome=req.outcome)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    _audit(req.operator, "change.complete", "change", change_id, result)
+    return result
 
 
 class ConfirmRequest(BaseModel):
@@ -463,6 +608,7 @@ def api_export_report(diagnosis_id: int):
     path = export_diagnosis_report(diagnosis_id)
     if not path:
         return JSONResponse({"error": "未找到该诊断记录"}, status_code=404)
+    _audit("web", "report.export", "diagnosis", str(diagnosis_id), {"path": path})
     return FileResponse(path, filename=os.path.basename(path), media_type="text/markdown")
 
 

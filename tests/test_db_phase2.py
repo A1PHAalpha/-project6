@@ -138,7 +138,7 @@ def test_phase2_schema_seeds_tools_and_knowledge_chunks(phase2_db):
         }
         kb_count = conn.execute("SELECT COUNT(*) FROM kb_chunks").fetchone()[0]
 
-    assert version == 4
+    assert version == db.SCHEMA_VERSION
     assert {
         "agent_sessions",
         "agent_messages",
@@ -301,7 +301,7 @@ def test_v2_database_migrates_and_backfills_legacy_diagnosis(tmp_path, monkeypat
     with db.get_conn() as migrated:
         assert migrated.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == db.SCHEMA_VERSION
         record = migrated.execute(
             "SELECT session_id, conclusion_id FROM diagnosis_records WHERE id=1"
         ).fetchone()
