@@ -13,6 +13,10 @@ from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.utils.embedding_functions import register_embedding_function
 from fastembed import TextEmbedding
 
+from project_config import load_project_env
+
+load_project_env()
+
 MODEL_NAME = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
 CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH")  # 可选：把模型缓存固定到仓库外/内
 

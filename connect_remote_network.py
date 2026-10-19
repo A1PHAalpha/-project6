@@ -10,9 +10,9 @@ import os
 import subprocess
 import sys
 
-from dotenv import load_dotenv
+from project_config import load_project_env
 
-load_dotenv()
+load_project_env()
 
 
 def _require(name: str) -> str:
@@ -186,7 +186,7 @@ def main():
     print("✓ 所有检查完成，远程网络已就绪")
     print("="*70)
     print("\n后续可以:")
-    print("  1. python3 -c \"from dotenv import load_dotenv; load_dotenv(); "
+    print("  1. python3 -c \"from project_config import load_project_env; load_project_env(); "
           "from rag_engine.diagnosis_engine import diagnose; print(diagnose('...', use_kb=True))\"")
     print("  2. 在EVE-NG中手工设置故障 → 采集 → 诊断 → 修复")
 

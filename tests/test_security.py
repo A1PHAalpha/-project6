@@ -12,7 +12,8 @@ TOKEN = os.environ["APP_API_TOKEN"]
 @pytest.fixture
 def client():
     # 每个用例独立 client，避免登录 Cookie 在用例间串扰
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_no_token_returns_401(client):

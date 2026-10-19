@@ -11,5 +11,6 @@ if str(PROJECT_ROOT) not in sys.path:
 _TMP_DIR = tempfile.mkdtemp(prefix="netops_test_")
 os.environ["APP_API_TOKEN"] = "test-token-0123456789"
 os.environ["LLM_API_KEY"] = "dummy"
+os.environ["APP_AUTO_COLLECT"] = "false"
 os.environ["SQLITE_DB_PATH"] = os.path.join(_TMP_DIR, "test_ops.db")
 os.environ["CHROMA_DB_PATH"] = os.path.join(_TMP_DIR, "chroma")

@@ -14,10 +14,6 @@
 (fault_phenomenon="LLM调用失败")。这是预期行为，不是脚本的bug——
 一旦在 .env 中配置真实的 LLM_API_KEY，重新运行本脚本即可拿到真实模型输出。
 """
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import json
 import os
 import sys
@@ -25,6 +21,12 @@ import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_config import load_project_env
+
+load_project_env()
 
 
 def _setup_isolated_env():

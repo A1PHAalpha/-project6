@@ -16,10 +16,6 @@
 
 本脚本使用隔离的临时数据库，不污染真实data/ops.db和data/chroma。
 """
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import json
 import os
 import shutil
@@ -30,6 +26,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from project_config import load_project_env
+
+load_project_env()
 
 
 def _setup_isolated_env():

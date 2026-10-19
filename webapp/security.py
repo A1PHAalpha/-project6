@@ -31,7 +31,8 @@ def get_api_token() -> str:
     token = os.getenv("APP_API_TOKEN")
     if not token or len(token) < MIN_TOKEN_LEN:
         raise RuntimeError(
-            "必须配置环境变量 APP_API_TOKEN 且长度不小于 16，请检查 .env"
+            "必须配置 APP_API_TOKEN 且长度不小于 16。请在项目根从 .env.example "
+            "创建 .env，并写入随机生成的令牌"
         )
     return token
 

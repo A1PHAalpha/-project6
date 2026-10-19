@@ -13,12 +13,13 @@ FastAPI Web 应用：企业网络智能运维诊断系统主入口。
 """
 import os
 import sys
+from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from dotenv import load_dotenv
+from project_config import env_flag, load_project_env
 
-load_dotenv()
+load_project_env()
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from app_bootstrap import bootstrap_runtime
 from collector import db
 from control.manual_change_workflow import confirm_and_backup, recheck_connectivity, reject_action
 from rag_engine.diagnosis_engine import diagnose
@@ -36,18 +38,23 @@ from webapp.security import router as auth_router
 # 启动即校验 APP_API_TOKEN：未配置/过短则直接报错退出，避免"忘配 = 裸奔"
 get_api_token()
 
-ENABLE_DOCS = os.getenv("APP_ENABLE_DOCS", "false").lower() in ("1", "true", "yes")
+ENABLE_DOCS = env_flag("APP_ENABLE_DOCS")
 _docs_kwargs = {} if ENABLE_DOCS else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
-app = FastAPI(title="企业网络智能运维诊断系统", **_docs_kwargs)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    bootstrap_runtime()
+    yield
+
+
+app = FastAPI(title="企业网络智能运维诊断系统", lifespan=lifespan, **_docs_kwargs)
 app.add_middleware(TokenAuthMiddleware)
 app.include_router(auth_router)
 
 BASE_DIR = os.path.dirname(__file__)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
-
-db.init_db()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -167,5 +174,5 @@ if __name__ == "__main__":
     import uvicorn
     host = os.getenv("APP_HOST", "127.0.0.1")
     port = int(os.getenv("APP_PORT", "8000"))
-    reload = os.getenv("APP_RELOAD", "false").lower() in ("1", "true", "yes")
+    reload = env_flag("APP_RELOAD")
     uvicorn.run("webapp.main:app", host=host, port=port, reload=reload)

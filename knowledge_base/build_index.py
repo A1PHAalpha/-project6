@@ -9,6 +9,10 @@ from pathlib import Path
 
 import chromadb
 
+from project_config import load_project_env
+
+load_project_env()
+
 from .embedding import MODEL_NAME, FastEmbedEmbeddingFunction
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -20,9 +24,10 @@ CHROMA_PATH = os.getenv("CHROMA_DB_PATH") or str(PROJECT_ROOT / "data" / "chroma
 COLLECTION_NAME = "ops_knowledge_base"
 
 
-def get_chroma_client():
-    os.makedirs(CHROMA_PATH, exist_ok=True)
-    return chromadb.PersistentClient(path=CHROMA_PATH)
+def get_chroma_client(path: str | None = None):
+    target_path = path or CHROMA_PATH
+    os.makedirs(target_path, exist_ok=True)
+    return chromadb.PersistentClient(path=target_path)
 
 
 def get_embedding_function():

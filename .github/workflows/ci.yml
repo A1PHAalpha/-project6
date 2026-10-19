@@ -20,7 +20,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements/dev.txt
       - run: ruff check .
-      - run: python -m compileall -q collector rag_engine knowledge_base control webapp
+      - run: python -m compileall -q collector rag_engine knowledge_base control webapp app_bootstrap.py project_config.py
 
   test:
     runs-on: ubuntu-latest
@@ -37,6 +37,12 @@ jobs:
           LLM_API_KEY: dummy          # 仅用于让 llm_client 通过，不发生真实调用
           APP_API_TOKEN: ci-dummy-token-0123456789
         run: python -c "import webapp.main"
+      - name: 启动准备冒烟
+        env:
+          LLM_API_KEY: dummy
+          APP_API_TOKEN: ci-dummy-token-0123456789
+          APP_AUTO_COLLECT: "false"
+        run: python -c "from app_bootstrap import bootstrap_runtime; bootstrap_runtime()"
 
   secret-scan:
     runs-on: ubuntu-latest

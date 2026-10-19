@@ -1,5 +1,5 @@
 """
-SQLite 数据层：设备台账缓存、采集记录、诊断记录、人工处理记录。
+SQLite 数据层：设备台账缓存、采集记录、诊断记录、人工处理记录和运行状态。
 所有时间统一用 ISO8601 字符串存储，便于溯源。
 """
 import json
@@ -8,6 +8,10 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from project_config import load_project_env
+
+load_project_env()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = os.getenv("SQLITE_DB_PATH") or str(PROJECT_ROOT / "data" / "ops.db")
@@ -64,6 +68,12 @@ CREATE TABLE IF NOT EXISTS manual_actions (
     status TEXT,                      -- confirmed / rejected / completed
     FOREIGN KEY (diagnosis_id) REFERENCES diagnosis_records(id)
 );
+
+CREATE TABLE IF NOT EXISTS system_status (
+    status_key TEXT PRIMARY KEY,
+    status_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -73,7 +83,7 @@ def now_iso() -> str:
 
 @contextmanager
 def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -222,3 +232,41 @@ def list_manual_actions(diagnosis_id=None):
                 "SELECT * FROM manual_actions ORDER BY id DESC"
             ).fetchall()
         return [dict(r) for r in rows]
+
+
+def set_system_status(status_key: str, status: dict):
+    """Insert or replace a runtime status record."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO system_status (status_key, status_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(status_key) DO UPDATE SET
+                 status_json=excluded.status_json,
+                 updated_at=excluded.updated_at""",
+            (status_key, json.dumps(status, ensure_ascii=False), now_iso()),
+        )
+
+
+def get_system_status(status_key: str):
+    """Return one runtime status record as a dict, or None when absent."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT status_json FROM system_status WHERE status_key=?",
+            (status_key,),
+        ).fetchone()
+    return json.loads(row["status_json"]) if row else None
+
+
+def list_system_status():
+    """Return all runtime status records keyed by status name."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT status_key, status_json, updated_at FROM system_status ORDER BY status_key"
+        ).fetchall()
+    return {
+        row["status_key"]: {
+            "updated_at": row["updated_at"],
+            **json.loads(row["status_json"]),
+        }
+        for row in rows
+    }

@@ -11,12 +11,24 @@ logger = logging.getLogger("retriever")
 _collection = None
 
 
+class KnowledgeBaseUnavailable(RuntimeError):
+    """Raised when the persisted knowledge base is missing or empty."""
+
+
 def _get_collection():
     global _collection
     if _collection is None:
         client = get_chroma_client()
         ef = get_embedding_function()
-        _collection = client.get_or_create_collection(name=COLLECTION_NAME, embedding_function=ef)
+        try:
+            _collection = client.get_collection(name=COLLECTION_NAME, embedding_function=ef)
+        except Exception as exc:
+            raise KnowledgeBaseUnavailable(
+                f"知识库索引不存在或无法加载，请先执行索引初始化: {type(exc).__name__}: {exc}"
+            ) from exc
+        if _collection.count() == 0:
+            _collection = None
+            raise KnowledgeBaseUnavailable("知识库集合为空，请先执行索引初始化")
     return _collection
 
 
@@ -27,6 +39,10 @@ def retrieve(query: str, top_k: int = 4, category_filter: str = None):
     返回: [{id, title, category, applicable_device, version, source, content, distance}]
     """
     collection = _get_collection()
+    count = collection.count()
+    if count == 0:
+        raise KnowledgeBaseUnavailable("知识库集合为空，请先执行索引初始化")
+    top_k = min(top_k, count)
     where = {"category": category_filter} if category_filter else None
 
     result = collection.query(

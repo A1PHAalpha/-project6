@@ -36,8 +36,19 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
     evidence_text = format_evidence_for_prompt(evidence_sanitized)
 
     # 3. 知识库检索（可关闭，用于效果对比测试）
-    kb_hits = retrieve(question, top_k=top_k) if use_kb else []
-    kb_text = format_kb_for_prompt(kb_hits) if use_kb else "（本次诊断未启用知识库检索，仅用于效果对比测试）"
+    kb_hits = []
+    kb_error = None
+    if use_kb:
+        try:
+            kb_hits = retrieve(question, top_k=top_k)
+            kb_text = format_kb_for_prompt(kb_hits)
+        except Exception as exc:
+            # 本地索引缺失时服务仍可用：降级为仅使用已采集的设备证据。
+            logger.warning("知识库检索失败，本次诊断降级运行: %s", exc)
+            kb_error = f"{type(exc).__name__}: {exc}"
+            kb_text = "（知识库当前不可用，本次诊断已降级为仅使用设备证据）"
+    else:
+        kb_text = "（本次诊断未启用知识库检索，仅用于效果对比测试）"
 
     # 4. 组装 Prompt
     question_sanitized = sanitize_text(question)
@@ -86,6 +97,16 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
         "use_kb": use_kb,
         "evidence": evidence_sanitized,
         "retrieved_docs": kb_hits,
+        "knowledge_base": {
+            "status": (
+                "disabled"
+                if not use_kb
+                else "ready" if kb_hits
+                else "error" if kb_error
+                else "empty"
+            ),
+            "error": kb_error,
+        },
         "answer": answer,
         "response_time_ms": elapsed_ms,
         "error": error,
