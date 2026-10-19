@@ -1,11 +1,19 @@
-"""SQLite 数据层：资产、采集批次、状态事实和诊断审计。
+"""SQLite 数据层：资产、采集批次、状态事实、诊断会话和人工变更。
 
-一期改造的核心是把“按命令追加日志”升级为：
+一期把“按命令追加日志”升级为：
 
     collection_runs
       -> device_capture_results
         -> collection_items
           -> state_observations
+
+二期在这一采集事实链上增加：
+
+    agent_sessions / agent_messages / context_snapshots
+      -> model_calls / retrieval_hits / diagnosis_conclusions / evidence_links
+
+    change_requests / change_steps / change_events
+      -> command_executions / physical_actions / config_backups / rechecks
 
 旧 ``collection_records`` 表会在首次迁移时保留为
 ``collection_records_legacy``，并创建同名兼容视图，避免现有页面和诊断
@@ -29,7 +37,7 @@ load_project_env()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = os.getenv("SQLITE_DB_PATH") or str(PROJECT_ROOT / "data" / "ops.db")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 BASE_SCHEMA = """
@@ -326,6 +334,424 @@ CREATE INDEX IF NOT EXISTS idx_topology_edges_snapshot ON topology_edges(snapsho
 SCHEMA = BASE_SCHEMA
 
 
+PHASE2_SCHEMA = """
+CREATE TABLE IF NOT EXISTS prompt_versions (
+    prompt_version_id TEXT PRIMARY KEY,
+    template_id TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    user_template TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (template_id, content_hash)
+);
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_by TEXT,
+    model_id TEXT,
+    prompt_version_id TEXT REFERENCES prompt_versions(prompt_version_id),
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'completed', 'failed', 'archived')),
+    started_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL,
+    ended_at_utc TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+    message_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    seq_no INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+    content_text TEXT,
+    content_json TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (session_id, seq_no)
+);
+
+CREATE TABLE IF NOT EXISTS context_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+    message_id TEXT REFERENCES agent_messages(message_id),
+    prompt_version_id TEXT REFERENCES prompt_versions(prompt_version_id),
+    rendered_messages_json TEXT NOT NULL,
+    rendered_prompt_redacted TEXT,
+    prompt_hash TEXT NOT NULL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_registry (
+    tool_id TEXT PRIMARY KEY,
+    tool_name TEXT NOT NULL UNIQUE,
+    transport TEXT NOT NULL CHECK (transport IN ('local', 'http', 'mcp')),
+    server_name TEXT,
+    description TEXT,
+    input_schema_json TEXT NOT NULL,
+    read_only INTEGER NOT NULL DEFAULT 1 CHECK (read_only IN (0, 1)),
+    requires_approval INTEGER NOT NULL DEFAULT 0 CHECK (requires_approval IN (0, 1)),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    version TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    tool_call_id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_sessions(session_id),
+    message_id TEXT REFERENCES agent_messages(message_id),
+    tool_id TEXT NOT NULL REFERENCES tool_registry(tool_id),
+    arguments_json TEXT NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN ('requested', 'running', 'success', 'failed')),
+    error_code TEXT,
+    error_message TEXT,
+    started_at_utc TEXT NOT NULL,
+    finished_at_utc TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_call_results (
+    result_id TEXT PRIMARY KEY,
+    tool_call_id TEXT NOT NULL UNIQUE REFERENCES tool_calls(tool_call_id) ON DELETE CASCADE,
+    result_kind TEXT NOT NULL,
+    collection_run_id TEXT REFERENCES collection_runs(run_id),
+    result_json TEXT NOT NULL,
+    blob_id TEXT REFERENCES raw_blobs(blob_id),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_calls (
+    call_id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_sessions(session_id),
+    message_id TEXT REFERENCES agent_messages(message_id),
+    context_snapshot_id TEXT REFERENCES context_snapshots(snapshot_id),
+    provider TEXT,
+    model TEXT NOT NULL,
+    request_id TEXT,
+    params_json TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    latency_ms INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('success', 'error')),
+    error_code TEXT,
+    error_message TEXT,
+    response_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kb_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    index_name TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    title TEXT,
+    category TEXT,
+    applicable_device TEXT,
+    version TEXT,
+    source TEXT,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (index_name, doc_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_queries (
+    query_id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_sessions(session_id),
+    message_id TEXT REFERENCES agent_messages(message_id),
+    query_text TEXT NOT NULL,
+    filters_json TEXT,
+    top_k INTEGER NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN ('success', 'empty', 'disabled', 'error')),
+    error_message TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_hits (
+    hit_id TEXT PRIMARY KEY,
+    query_id TEXT NOT NULL REFERENCES retrieval_queries(query_id) ON DELETE CASCADE,
+    chunk_id TEXT REFERENCES kb_chunks(chunk_id),
+    rank_no INTEGER NOT NULL,
+    distance REAL,
+    doc_id TEXT NOT NULL,
+    title TEXT,
+    category TEXT,
+    applicable_device TEXT,
+    version TEXT,
+    source TEXT,
+    content TEXT,
+    content_hash TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE (query_id, rank_no)
+);
+
+CREATE TABLE IF NOT EXISTS diagnosis_conclusions (
+    conclusion_id TEXT PRIMARY KEY,
+    diagnosis_id INTEGER NOT NULL UNIQUE REFERENCES diagnosis_records(id),
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id),
+    final_message_id TEXT REFERENCES agent_messages(message_id),
+    fault_phenomenon TEXT,
+    root_cause TEXT,
+    missing_information TEXT,
+    confidence TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evidence_links (
+    link_id TEXT PRIMARY KEY,
+    conclusion_id TEXT NOT NULL REFERENCES diagnosis_conclusions(conclusion_id) ON DELETE CASCADE,
+    link_type TEXT NOT NULL
+        CHECK (link_type IN ('device_evidence', 'knowledge', 'tool_result')),
+    observation_id TEXT REFERENCES state_observations(observation_id),
+    item_id TEXT REFERENCES collection_items(item_id),
+    retrieval_hit_id TEXT REFERENCES retrieval_hits(hit_id),
+    tool_call_result_id TEXT REFERENCES tool_call_results(result_id),
+    claim TEXT,
+    role TEXT NOT NULL DEFAULT 'supporting'
+        CHECK (role IN ('supporting', 'conflicting', 'context', 'missing')),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated
+    ON agent_sessions(updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_session
+    ON agent_messages(session_id, seq_no);
+CREATE INDEX IF NOT EXISTS idx_context_snapshots_session
+    ON context_snapshots(session_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_session
+    ON tool_calls(session_id, started_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_model_calls_session
+    ON model_calls(session_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_queries_session
+    ON retrieval_queries(session_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_hits_query
+    ON retrieval_hits(query_id, rank_no);
+CREATE INDEX IF NOT EXISTS idx_evidence_links_conclusion
+    ON evidence_links(conclusion_id, link_type);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc
+    ON kb_chunks(doc_id, version);
+"""
+
+
+PHASE2B_SCHEMA = """
+CREATE TABLE IF NOT EXISTS change_requests (
+    change_id TEXT PRIMARY KEY,
+    conclusion_id TEXT REFERENCES diagnosis_conclusions(conclusion_id),
+    diagnosis_id INTEGER REFERENCES diagnosis_records(id),
+    session_id TEXT REFERENCES agent_sessions(session_id),
+    device_id TEXT REFERENCES devices(device_id),
+    device_name TEXT NOT NULL,
+    change_type TEXT NOT NULL
+        CHECK (change_type IN ('physical', 'software', 'mixed')),
+    title TEXT NOT NULL,
+    description TEXT,
+    risk_level TEXT NOT NULL DEFAULT 'medium'
+        CHECK (risk_level IN ('low', 'medium', 'high')),
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN (
+            'draft', 'pending_approval', 'approved', 'rejected',
+            'executing', 'completed', 'failed', 'rolled_back', 'cancelled'
+        )),
+    requested_by TEXT NOT NULL,
+    approved_by TEXT,
+    planned_at_utc TEXT,
+    started_at_utc TEXT,
+    finished_at_utc TEXT,
+    rollback_plan TEXT,
+    legacy_action_id INTEGER UNIQUE,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS change_steps (
+    step_id TEXT PRIMARY KEY,
+    change_id TEXT NOT NULL REFERENCES change_requests(change_id) ON DELETE CASCADE,
+    seq_no INTEGER NOT NULL,
+    step_type TEXT NOT NULL
+        CHECK (step_type IN ('physical', 'software', 'verification')),
+    source_type TEXT NOT NULL DEFAULT 'human'
+        CHECK (source_type IN ('llm', 'human')),
+    title TEXT NOT NULL,
+    command_text TEXT,
+    expected_result TEXT,
+    requires_approval INTEGER NOT NULL DEFAULT 0
+        CHECK (requires_approval IN (0, 1)),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'ready', 'running', 'success', 'failed', 'skipped')),
+    executed_by TEXT,
+    started_at_utc TEXT,
+    finished_at_utc TEXT,
+    result_summary TEXT,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL,
+    UNIQUE (change_id, seq_no)
+);
+
+CREATE TABLE IF NOT EXISTS change_approvals (
+    approval_id TEXT PRIMARY KEY,
+    change_id TEXT NOT NULL REFERENCES change_requests(change_id) ON DELETE CASCADE,
+    approver TEXT NOT NULL,
+    decision TEXT NOT NULL
+        CHECK (decision IN ('approved', 'rejected', 'changes_requested')),
+    comment TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS change_events (
+    event_id TEXT PRIMARY KEY,
+    change_id TEXT NOT NULL REFERENCES change_requests(change_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT,
+    payload_json TEXT,
+    payload_hash TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS command_executions (
+    execution_id TEXT PRIMARY KEY,
+    step_id TEXT NOT NULL REFERENCES change_steps(step_id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(device_id),
+    command_text TEXT NOT NULL,
+    execution_mode TEXT NOT NULL DEFAULT 'manual'
+        CHECK (execution_mode IN ('manual', 'readonly', 'approved_automation')),
+    executed_by TEXT NOT NULL,
+    started_at_utc TEXT NOT NULL,
+    finished_at_utc TEXT,
+    exit_code INTEGER,
+    stdout_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    stderr_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    result_summary TEXT,
+    approval_id TEXT REFERENCES change_approvals(approval_id),
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS physical_actions (
+    action_id TEXT PRIMARY KEY,
+    step_id TEXT NOT NULL REFERENCES change_steps(step_id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(device_id),
+    action_type TEXT NOT NULL
+        CHECK (action_type IN ('cable', 'power', 'console', 'module', 'other')),
+    description TEXT NOT NULL,
+    performed_by TEXT NOT NULL,
+    performed_at_utc TEXT NOT NULL,
+    evidence_blob_id TEXT REFERENCES raw_blobs(blob_id),
+    result TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS config_backups (
+    backup_id TEXT PRIMARY KEY,
+    change_id TEXT NOT NULL REFERENCES change_requests(change_id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(device_id),
+    config_snapshot_id TEXT REFERENCES config_snapshots(config_id),
+    blob_id TEXT REFERENCES raw_blobs(blob_id),
+    sha256 TEXT,
+    captured_at_utc TEXT NOT NULL,
+    backup_type TEXT NOT NULL DEFAULT 'before'
+        CHECK (backup_type IN ('before', 'after', 'rollback')),
+    verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0, 1)),
+    storage_ref TEXT,
+    restore_ref TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rechecks (
+    recheck_id TEXT PRIMARY KEY,
+    change_id TEXT NOT NULL REFERENCES change_requests(change_id) ON DELETE CASCADE,
+    collection_run_id TEXT REFERENCES collection_runs(run_id),
+    source_device_id TEXT REFERENCES devices(device_id),
+    source_device_name TEXT,
+    target TEXT NOT NULL,
+    check_type TEXT NOT NULL DEFAULT 'ping'
+        CHECK (check_type IN ('ping', 'interface', 'route', 'acl', 'application')),
+    expected_json TEXT,
+    actual_json TEXT,
+    pass_fail TEXT NOT NULL
+        CHECK (pass_fail IN ('pass', 'fail', 'inconclusive')),
+    evidence_observation_id TEXT REFERENCES state_observations(observation_id),
+    executed_at_utc TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    attachment_id TEXT PRIMARY KEY,
+    owner_type TEXT NOT NULL
+        CHECK (owner_type IN ('change', 'step', 'physical_action', 'report')),
+    owner_id TEXT NOT NULL,
+    blob_id TEXT REFERENCES raw_blobs(blob_id),
+    mime_type TEXT,
+    caption TEXT,
+    uploaded_by TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS health_checks (
+    check_id TEXT PRIMARY KEY,
+    component TEXT NOT NULL,
+    status TEXT NOT NULL
+        CHECK (status IN ('ready', 'degraded', 'error', 'unknown')),
+    details_json TEXT,
+    checked_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    audit_id TEXT PRIMARY KEY,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT,
+    request_id TEXT,
+    details_json TEXT,
+    created_at_utc TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    report_id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_sessions(session_id),
+    conclusion_id TEXT REFERENCES diagnosis_conclusions(conclusion_id),
+    change_id TEXT REFERENCES change_requests(change_id),
+    report_type TEXT NOT NULL,
+    blob_id TEXT REFERENCES raw_blobs(blob_id),
+    sha256 TEXT,
+    generated_by TEXT,
+    generated_at_utc TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_changes_conclusion
+    ON change_requests(conclusion_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_changes_device_status
+    ON change_requests(device_id, status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_changes_status_updated
+    ON change_requests(status, updated_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_change_steps_change
+    ON change_steps(change_id, seq_no);
+CREATE INDEX IF NOT EXISTS idx_change_approvals_change
+    ON change_approvals(change_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_change_events_change
+    ON change_events(change_id, created_at_utc);
+CREATE INDEX IF NOT EXISTS idx_command_executions_step
+    ON command_executions(step_id, created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_physical_actions_step
+    ON physical_actions(step_id, performed_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_config_backups_change
+    ON config_backups(change_id, captured_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_rechecks_change
+    ON rechecks(change_id, executed_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_attachments_owner
+    ON attachments(owner_type, owner_id);
+CREATE INDEX IF NOT EXISTS idx_health_checks_component
+    ON health_checks(component, checked_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created
+    ON audit_log(created_at_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_session
+    ON reports(session_id, generated_at_utc DESC);
+"""
+
+
 def now_iso() -> str:
     """所有新表统一使用 UTC ISO8601 时间。"""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -435,6 +861,23 @@ def _legacy_tables(conn: sqlite3.Connection, prefix: str) -> list[str]:
     return [row[0] for row in rows]
 
 
+def _schema_version(conn: sqlite3.Connection) -> int:
+    if not _table_exists(conn, "schema_migrations"):
+        return 0
+    row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+    return int(row[0] or 0)
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    if column not in _columns(conn, table):
+        conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {definition}')
+
+
 def _needs_legacy_migration(conn: sqlite3.Connection) -> bool:
     if _table_exists(conn, "devices") and "device_id" not in _columns(conn, "devices"):
         return True
@@ -446,6 +889,25 @@ def _backup_before_migration(conn: sqlite3.Connection) -> str | None:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = f"{DB_PATH}.pre-phase1-{stamp}.bak"
+    if Path(backup_path).exists():
+        return backup_path
+    dst = sqlite3.connect(backup_path)
+    try:
+        conn.backup(dst)
+    finally:
+        dst.close()
+    return backup_path
+
+
+def _backup_before_upgrade(conn: sqlite3.Connection) -> str | None:
+    """在结构升级前创建可恢复备份，避免就地迁移失败损坏现有数据。"""
+    if _needs_legacy_migration(conn):
+        return _backup_before_migration(conn)
+    version = _schema_version(conn)
+    if version == 0 or version >= SCHEMA_VERSION:
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = f"{DB_PATH}.pre-v{SCHEMA_VERSION}-{stamp}.bak"
     if Path(backup_path).exists():
         return backup_path
     dst = sqlite3.connect(backup_path)
@@ -1241,6 +1703,7 @@ def insert_collection_batch(
     result_type: str = "full",
     requested_by: str = "legacy_api",
     inventory_version_id: str | None = None,
+    scope_type: str | None = None,
 ) -> dict:
     init_db()
     records = [dict(record) for record in records]
@@ -1254,6 +1717,7 @@ def insert_collection_batch(
             result_type,
             requested_by,
             inventory_version_id,
+            scope_type,
         )
 
 
@@ -1802,6 +2266,519 @@ def _seed_command_policies(conn: sqlite3.Connection) -> None:
     )
 
 
+def _seed_kb_chunks(conn: sqlite3.Connection) -> None:
+    """把当前知识库文章固化到关系表，供历史检索结果回看。"""
+    articles_path = PROJECT_ROOT / "knowledge_base" / "articles.json"
+    if not articles_path.exists():
+        return
+    try:
+        payload = json.loads(articles_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    articles = payload.get("articles", payload) if isinstance(payload, dict) else payload
+    if not isinstance(articles, list):
+        return
+    for article in articles:
+        doc_id = str(article.get("id") or "").strip()
+        if not doc_id:
+            continue
+        version = str(article.get("version") or "unknown")
+        content = str(article.get("content") or "")
+        digest = _sha256(
+            json.dumps(
+                {
+                    "title": article.get("title"),
+                    "content": content,
+                    "source": article.get("source"),
+                    "version": version,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        chunk_id = _stable_id("kbchunk", f"ops_knowledge_base:{doc_id}:{version}")
+        conn.execute(
+            """INSERT INTO kb_chunks
+               (chunk_id, index_name, doc_id, title, category, applicable_device,
+                version, source, content, content_hash, created_at_utc)
+               VALUES (?, 'ops_knowledge_base', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(index_name, doc_id, version) DO UPDATE SET
+                 title=excluded.title,
+                 category=excluded.category,
+                 applicable_device=excluded.applicable_device,
+                 source=excluded.source,
+                 content=excluded.content,
+                 content_hash=excluded.content_hash""",
+            (
+                chunk_id,
+                doc_id,
+                article.get("title"),
+                article.get("category"),
+                article.get("applicable_device"),
+                version,
+                article.get("source"),
+                content,
+                digest,
+                now_iso(),
+            ),
+        )
+
+
+def _seed_tool_registry(conn: sqlite3.Connection) -> None:
+    registry_path = PROJECT_ROOT / "network" / "tool_registry.json"
+    if not registry_path.exists():
+        return
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    tools = payload.get("tools", []) if isinstance(payload, dict) else payload
+    if not isinstance(tools, list):
+        return
+    for tool in tools:
+        name = str(tool.get("tool_name") or "").strip()
+        if not name:
+            continue
+        tool_id = _stable_id("tool", name)
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO tool_registry
+               (tool_id, tool_name, transport, server_name, description,
+                input_schema_json, read_only, requires_approval, enabled,
+                version, created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(tool_name) DO UPDATE SET
+                 transport=excluded.transport,
+                 server_name=excluded.server_name,
+                 description=excluded.description,
+                 input_schema_json=excluded.input_schema_json,
+                 read_only=excluded.read_only,
+                 requires_approval=excluded.requires_approval,
+                 enabled=excluded.enabled,
+                 version=excluded.version,
+                 updated_at_utc=excluded.updated_at_utc""",
+            (
+                tool_id,
+                name,
+                tool.get("transport") or "local",
+                tool.get("server_name"),
+                tool.get("description"),
+                json.dumps(tool.get("input_schema") or {}, ensure_ascii=False),
+                1 if tool.get("read_only", True) else 0,
+                1 if tool.get("requires_approval", False) else 0,
+                1 if tool.get("enabled", True) else 0,
+                str(tool.get("version") or "phase2"),
+                timestamp,
+                timestamp,
+            ),
+        )
+
+
+def _ensure_phase2_columns(conn: sqlite3.Connection) -> None:
+    _ensure_column(
+        conn,
+        "diagnosis_records",
+        "session_id",
+        "TEXT REFERENCES agent_sessions(session_id)",
+    )
+    _ensure_column(
+        conn,
+        "diagnosis_records",
+        "conclusion_id",
+        "TEXT REFERENCES diagnosis_conclusions(conclusion_id)",
+    )
+    _ensure_column(
+        conn,
+        "diagnosis_records",
+        "retrieval_query_id",
+        "TEXT REFERENCES retrieval_queries(query_id)",
+    )
+    _ensure_column(
+        conn,
+        "diagnosis_records",
+        "context_snapshot_id",
+        "TEXT REFERENCES context_snapshots(snapshot_id)",
+    )
+    _ensure_column(
+        conn,
+        "diagnosis_records",
+        "model_call_id",
+        "TEXT REFERENCES model_calls(call_id)",
+    )
+    _ensure_column(conn, "diagnosis_records", "kb_status", "TEXT")
+    _ensure_column(conn, "diagnosis_records", "total_response_time_ms", "INTEGER")
+
+
+def _backfill_legacy_diagnoses(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """SELECT * FROM diagnosis_records
+           WHERE session_id IS NULL OR conclusion_id IS NULL
+           ORDER BY id"""
+    ).fetchall()
+    for row in rows:
+        diagnosis_id = row["id"]
+        session_id = row["session_id"] or _stable_id("session", f"legacy-diagnosis:{diagnosis_id}")
+        timestamp = _to_utc_iso(row["created_at"]) or now_iso()
+        question = row["question"] or ""
+        answer = _json_value(row["answer_json"]) or {}
+        evidence = _json_value(row["evidence_json"]) or []
+        retrieved_ids = _json_value(row["retrieved_doc_ids_json"]) or []
+        conn.execute(
+            """INSERT OR IGNORE INTO agent_sessions
+               (session_id, title, created_by, model_id, prompt_version_id, status,
+                started_at_utc, updated_at_utc, ended_at_utc)
+               VALUES (?, ?, 'legacy_import', ?, NULL, 'completed', ?, ?, ?)""",
+            (
+                session_id,
+                (question[:80] or f"历史诊断 #{diagnosis_id}"),
+                row["model_id"],
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        user_message_id = _stable_id("msg", f"{session_id}:1")
+        assistant_message_id = _stable_id("msg", f"{session_id}:2")
+        conn.execute(
+            """INSERT OR IGNORE INTO agent_messages
+               (message_id, session_id, seq_no, role, content_text, content_json, created_at_utc)
+               VALUES (?, ?, 1, 'user', ?, ?, ?)""",
+            (
+                user_message_id,
+                session_id,
+                question,
+                json.dumps({"question": question}, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO agent_messages
+               (message_id, session_id, seq_no, role, content_text, content_json, created_at_utc)
+               VALUES (?, ?, 2, 'assistant', ?, ?, ?)""",
+            (
+                assistant_message_id,
+                session_id,
+                json.dumps(answer, ensure_ascii=False),
+                json.dumps(answer, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+        snapshot_id = row["context_snapshot_id"] or _stable_id(
+            "ctx", f"legacy-diagnosis:{diagnosis_id}"
+        )
+        snapshot_text = json.dumps(
+            {
+                "question": question,
+                "evidence": evidence,
+                "retrieved_doc_ids": retrieved_ids,
+            },
+            ensure_ascii=False,
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO context_snapshots
+               (snapshot_id, session_id, message_id, prompt_version_id,
+                rendered_messages_json, rendered_prompt_redacted, prompt_hash,
+                token_count, created_at_utc)
+               VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?)""",
+            (
+                snapshot_id,
+                session_id,
+                user_message_id,
+                snapshot_text,
+                _sha256(snapshot_text),
+                max(1, len(snapshot_text) // 4),
+                timestamp,
+            ),
+        )
+        query_id = row["retrieval_query_id"] or _stable_id(
+            "retrieval", f"legacy-diagnosis:{diagnosis_id}"
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO retrieval_queries
+               (query_id, session_id, message_id, query_text, filters_json,
+                top_k, status, error_message, created_at_utc)
+               VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)""",
+            (
+                query_id,
+                session_id,
+                user_message_id,
+                question,
+                len(retrieved_ids) if retrieved_ids else 4,
+                "success" if retrieved_ids else "empty",
+                timestamp,
+            ),
+        )
+        for rank, doc_id in enumerate(retrieved_ids, 1):
+            chunk = conn.execute(
+                """SELECT * FROM kb_chunks
+                   WHERE index_name='ops_knowledge_base' AND doc_id=?
+                   ORDER BY created_at_utc DESC LIMIT 1""",
+                (doc_id,),
+            ).fetchone()
+            hit_id = _stable_id("hit", f"{query_id}:{rank}:{doc_id}")
+            conn.execute(
+                """INSERT OR IGNORE INTO retrieval_hits
+                   (hit_id, query_id, chunk_id, rank_no, distance, doc_id, title,
+                    category, applicable_device, version, source, content,
+                    content_hash, created_at_utc)
+                   VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    hit_id,
+                    query_id,
+                    chunk["chunk_id"] if chunk else None,
+                    rank,
+                    str(doc_id),
+                    chunk["title"] if chunk else None,
+                    chunk["category"] if chunk else None,
+                    chunk["applicable_device"] if chunk else None,
+                    chunk["version"] if chunk else None,
+                    chunk["source"] if chunk else None,
+                    chunk["content"] if chunk else None,
+                    chunk["content_hash"] if chunk else None,
+                    timestamp,
+                ),
+            )
+        model_call_id = row["model_call_id"] or _stable_id(
+            "modelcall", f"legacy-diagnosis:{diagnosis_id}"
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO model_calls
+               (call_id, session_id, message_id, context_snapshot_id, provider,
+                model, request_id, params_json, input_tokens, output_tokens,
+                latency_ms, status, error_code, error_message, response_blob_id,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, 'legacy_unknown', ?, NULL, ?, NULL, NULL,
+                       ?, 'success', NULL, NULL, NULL, ?)""",
+            (
+                model_call_id,
+                session_id,
+                assistant_message_id,
+                snapshot_id,
+                row["model_id"],
+                row["llm_params_json"],
+                row["response_time_ms"],
+                timestamp,
+            ),
+        )
+        conclusion_id = row["conclusion_id"] or _stable_id(
+            "conclusion", f"legacy-diagnosis:{diagnosis_id}"
+        )
+        causes = answer.get("possible_causes") or []
+        root_cause = ""
+        if causes and isinstance(causes[0], dict):
+            root_cause = str(causes[0].get("cause") or "")
+        conn.execute(
+            """INSERT OR IGNORE INTO diagnosis_conclusions
+               (conclusion_id, diagnosis_id, session_id, final_message_id,
+                fault_phenomenon, root_cause, missing_information, confidence,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                conclusion_id,
+                diagnosis_id,
+                session_id,
+                assistant_message_id,
+                answer.get("fault_phenomenon"),
+                root_cause or None,
+                answer.get("missing_information"),
+                None,
+                timestamp,
+            ),
+        )
+        for evidence_item in evidence:
+            if not isinstance(evidence_item, dict):
+                continue
+            observation_id = evidence_item.get("observation_id")
+            item_id = evidence_item.get("item_id")
+            if observation_id and not conn.execute(
+                "SELECT 1 FROM state_observations WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone():
+                observation_id = None
+            if item_id and not conn.execute(
+                "SELECT 1 FROM collection_items WHERE item_id=?",
+                (item_id,),
+            ).fetchone():
+                item_id = None
+            if not observation_id and not item_id:
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO evidence_links
+                   (link_id, conclusion_id, link_type, observation_id, item_id,
+                    retrieval_hit_id, tool_call_result_id, claim, role, created_at_utc)
+                   VALUES (?, ?, 'device_evidence', ?, ?, NULL, NULL, ?, 'context', ?)""",
+                (
+                    _stable_id(
+                        "evlink",
+                        f"{conclusion_id}:{observation_id or item_id}",
+                    ),
+                    conclusion_id,
+                    observation_id,
+                    item_id,
+                    evidence_item.get("summary"),
+                    timestamp,
+                ),
+            )
+        conn.execute(
+            """UPDATE diagnosis_records
+               SET session_id=?, conclusion_id=?, retrieval_query_id=?,
+                   context_snapshot_id=?, model_call_id=?, kb_status=?,
+                   total_response_time_ms=?
+               WHERE id=?""",
+            (
+                session_id,
+                conclusion_id,
+                query_id,
+                snapshot_id,
+                model_call_id,
+                "success" if retrieved_ids else "empty",
+                row["response_time_ms"],
+                diagnosis_id,
+            ),
+        )
+
+
+def _legacy_change_status(value: str | None) -> str:
+    mapping = {
+        "confirmed": "approved",
+        "completed": "completed",
+        "rejected": "rejected",
+        "backup_failed": "failed",
+        "recheck_failed": "failed",
+    }
+    return mapping.get(str(value or ""), "draft")
+
+
+def _backfill_legacy_manual_actions(conn: sqlite3.Connection) -> None:
+    """把旧 manual_actions 转成可查看的历史变更，保留原 ID 和文本。"""
+    if not _table_exists(conn, "manual_actions"):
+        return
+    rows = conn.execute("SELECT * FROM manual_actions ORDER BY id").fetchall()
+    for row in rows:
+        legacy_id = int(row["id"])
+        if conn.execute(
+            "SELECT 1 FROM change_requests WHERE legacy_action_id=?",
+            (legacy_id,),
+        ).fetchone():
+            continue
+        timestamp = _to_utc_iso(row["created_at"]) or now_iso()
+        operator = row["operator"] or "legacy"
+        description = row["action_desc"] or "历史人工操作"
+        status = _legacy_change_status(row["status"])
+        diagnosis_id = row["diagnosis_id"]
+        diagnosis_row = None
+        conclusion_id = None
+        session_id = None
+        if diagnosis_id:
+            diagnosis_row = conn.execute(
+                "SELECT * FROM diagnosis_records WHERE id=?",
+                (diagnosis_id,),
+            ).fetchone()
+            if diagnosis_row:
+                conclusion_id = diagnosis_row["conclusion_id"]
+                session_id = diagnosis_row["session_id"]
+        change_id = _stable_id("change", f"legacy-action:{legacy_id}")
+        conn.execute(
+            """INSERT INTO change_requests
+               (change_id, conclusion_id, diagnosis_id, session_id, device_id,
+                device_name, change_type, title, description, risk_level, status,
+                requested_by, approved_by, planned_at_utc, started_at_utc,
+                finished_at_utc, rollback_plan, legacy_action_id,
+                created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, NULL, '未指定设备', 'software', ?, ?, 'medium',
+                       ?, ?, NULL, NULL, ?, ?, NULL, ?, ?, ?)""",
+            (
+                change_id,
+                conclusion_id,
+                diagnosis_id if diagnosis_row else None,
+                session_id,
+                (description[:100] or "历史人工操作"),
+                description,
+                status,
+                operator,
+                operator if status in ("approved", "completed") else None,
+                timestamp if status in ("executing", "completed", "failed") else None,
+                timestamp if status in ("completed", "failed") else None,
+                legacy_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO change_events
+               (event_id, change_id, event_type, actor, from_status, to_status,
+                payload_json, payload_hash, created_at_utc)
+               VALUES (?, ?, 'legacy_imported', ?, NULL, ?, ?, ?, ?)""",
+            (
+                _new_id("changeevent"),
+                change_id,
+                operator,
+                status,
+                json.dumps(
+                    {"legacy_action_id": legacy_id, "raw_status": row["status"]},
+                    ensure_ascii=False,
+                ),
+                _sha256(f"legacy-action:{legacy_id}:{row['status']}"),
+                timestamp,
+            ),
+        )
+        step_status = "success" if status == "completed" else "pending"
+        conn.execute(
+            """INSERT INTO change_steps
+               (step_id, change_id, seq_no, step_type, source_type, title,
+                command_text, expected_result, requires_approval, status,
+                executed_by, started_at_utc, finished_at_utc, result_summary,
+                created_at_utc, updated_at_utc)
+               VALUES (?, ?, 1, 'software', 'human', ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                _stable_id("step", f"legacy-action:{legacy_id}:1"),
+                change_id,
+                (description[:100] or "历史人工操作"),
+                description,
+                step_status,
+                operator,
+                timestamp,
+                timestamp if step_status == "success" else None,
+                row["recheck_result"],
+                timestamp,
+                timestamp,
+            ),
+        )
+        if row["backup_ref"]:
+            conn.execute(
+                """INSERT INTO config_backups
+                   (backup_id, change_id, device_id, config_snapshot_id, blob_id,
+                    sha256, captured_at_utc, backup_type, verified, storage_ref,
+                    restore_ref, created_at_utc)
+                   VALUES (?, ?, NULL, NULL, NULL, NULL, ?, 'before', 0, ?, NULL, ?)""",
+                (
+                    _stable_id("backup", f"legacy-action:{legacy_id}"),
+                    change_id,
+                    timestamp,
+                    row["backup_ref"],
+                    timestamp,
+                ),
+            )
+        if row["recheck_result"]:
+            conn.execute(
+                """INSERT INTO rechecks
+                   (recheck_id, change_id, collection_run_id, source_device_id,
+                    source_device_name, target, check_type, expected_json,
+                    actual_json, pass_fail, evidence_observation_id,
+                    executed_at_utc, created_at_utc)
+                   VALUES (?, ?, NULL, NULL, NULL, 'legacy', 'ping', NULL, ?,
+                           ?, NULL, ?, ?)""",
+                (
+                    _stable_id("recheck", f"legacy-action:{legacy_id}"),
+                    change_id,
+                    json.dumps({"recheck_result": row["recheck_result"]}, ensure_ascii=False),
+                    "pass" if status == "completed" else "fail",
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+
 def _normalize_existing_timestamps(conn: sqlite3.Connection) -> None:
     """把一期旧数据中的本地时区时间统一转换为 UTC。"""
     table_columns = {
@@ -1831,6 +2808,46 @@ def _normalize_existing_timestamps(conn: sqlite3.Connection) -> None:
         "state_observations": ("observed_at_utc", "created_at_utc"),
         "config_snapshots": ("captured_at_utc",),
         "topology_snapshots": ("created_at_utc",),
+        "prompt_versions": ("created_at_utc",),
+        "agent_sessions": ("started_at_utc", "updated_at_utc", "ended_at_utc"),
+        "agent_messages": ("created_at_utc",),
+        "context_snapshots": ("created_at_utc",),
+        "tool_registry": ("created_at_utc", "updated_at_utc"),
+        "tool_calls": ("started_at_utc", "finished_at_utc", "created_at_utc"),
+        "tool_call_results": ("created_at_utc",),
+        "model_calls": ("created_at_utc",),
+        "kb_chunks": ("created_at_utc",),
+        "retrieval_queries": ("created_at_utc",),
+        "retrieval_hits": ("created_at_utc",),
+        "diagnosis_conclusions": ("created_at_utc",),
+        "evidence_links": ("created_at_utc",),
+        "change_requests": (
+            "planned_at_utc",
+            "started_at_utc",
+            "finished_at_utc",
+            "created_at_utc",
+            "updated_at_utc",
+        ),
+        "change_steps": (
+            "started_at_utc",
+            "finished_at_utc",
+            "created_at_utc",
+            "updated_at_utc",
+        ),
+        "change_approvals": ("created_at_utc",),
+        "change_events": ("created_at_utc",),
+        "command_executions": (
+            "started_at_utc",
+            "finished_at_utc",
+            "created_at_utc",
+        ),
+        "physical_actions": ("performed_at_utc", "created_at_utc"),
+        "config_backups": ("captured_at_utc", "created_at_utc"),
+        "rechecks": ("executed_at_utc", "created_at_utc"),
+        "attachments": ("created_at_utc",),
+        "health_checks": ("checked_at_utc",),
+        "audit_log": ("created_at_utc",),
+        "reports": ("generated_at_utc",),
         "diagnosis_records": ("created_at",),
         "manual_actions": ("created_at",),
         "system_status": ("updated_at",),
@@ -1899,8 +2916,27 @@ def _prepare_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """INSERT OR IGNORE INTO schema_migrations (version, name, applied_at_utc)
            VALUES (?, 'normalize_utc_timestamps', ?)""",
-        (SCHEMA_VERSION, now_iso()),
+        (2, now_iso()),
     )
+    if _schema_version(conn) < 3:
+        conn.executescript(PHASE2_SCHEMA)
+        _ensure_phase2_columns(conn)
+        _backfill_legacy_diagnoses(conn)
+        conn.execute(
+            """INSERT OR IGNORE INTO schema_migrations (version, name, applied_at_utc)
+               VALUES (3, 'phase2_agent_sessions_tools_and_citations', ?)""",
+            (now_iso(),),
+        )
+    if _schema_version(conn) < 4:
+        conn.executescript(PHASE2B_SCHEMA)
+        _backfill_legacy_manual_actions(conn)
+        conn.execute(
+            """INSERT OR IGNORE INTO schema_migrations (version, name, applied_at_utc)
+               VALUES (4, 'phase2b_human_change_and_operations', ?)""",
+            (now_iso(),),
+        )
+    _seed_kb_chunks(conn)
+    _seed_tool_registry(conn)
 
 
 def init_db():
@@ -1910,7 +2946,7 @@ def init_db():
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-        _backup_before_migration(conn)
+        _backup_before_upgrade(conn)
         conn.execute("BEGIN")
         _prepare_schema(conn)
         conn.commit()
@@ -1953,6 +2989,1528 @@ def get_diagnosis(diagnosis_id: int):
             "SELECT * FROM diagnosis_records WHERE id=?", (diagnosis_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def _next_message_seq_conn(conn: sqlite3.Connection, session_id: str) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(seq_no), 0) FROM agent_messages WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    return int(row[0] or 0) + 1
+
+
+def _kb_chunk_for_hit_conn(conn: sqlite3.Connection, hit: dict) -> sqlite3.Row | None:
+    doc_id = str(hit.get("id") or hit.get("doc_id") or "")
+    if not doc_id:
+        return None
+    if hit.get("version"):
+        row = conn.execute(
+            """SELECT * FROM kb_chunks
+               WHERE index_name='ops_knowledge_base' AND doc_id=? AND version=?
+               LIMIT 1""",
+            (doc_id, hit.get("version")),
+        ).fetchone()
+        if row:
+            return row
+    return conn.execute(
+        """SELECT * FROM kb_chunks
+           WHERE index_name='ops_knowledge_base' AND doc_id=?
+           ORDER BY created_at_utc DESC LIMIT 1""",
+        (doc_id,),
+    ).fetchone()
+
+
+def save_diagnosis_run(
+    *,
+    question: str,
+    model_id: str,
+    prompt_template_id: str,
+    prompt_version: dict | None,
+    llm_params: dict | None,
+    answer: dict,
+    evidence: list,
+    retrieved_docs: list,
+    use_kb: bool,
+    kb_status: str,
+    kb_error: str | None,
+    response_time_ms: int | None,
+    total_response_time_ms: int | None,
+    context_messages: list,
+    requested_by: str = "web",
+    session_id: str | None = None,
+    model_status: str = "success",
+    model_error_code: str | None = None,
+    model_error_message: str | None = None,
+    retrieval_filters: dict | None = None,
+    top_k: int = 4,
+) -> dict:
+    """原子写入一次诊断的会话、上下文、检索、模型调用和结论引用。"""
+    init_db()
+    timestamp = now_iso()
+    prompt_version_id = None
+    params = dict(llm_params or {})
+    answer_text = json.dumps(answer, ensure_ascii=False, sort_keys=True)
+
+    with get_conn() as conn:
+        if prompt_version:
+            system_prompt = str(prompt_version.get("system_prompt") or "")
+            user_template = str(prompt_version.get("user_template") or "")
+            prompt_hash = _sha256(system_prompt + "\n" + user_template)
+            prompt_version_id = _stable_id(
+                "promptver", f"{prompt_template_id}:{prompt_hash}"
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO prompt_versions
+                   (prompt_version_id, template_id, system_prompt, user_template,
+                    content_hash, is_active, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                (
+                    prompt_version_id,
+                    prompt_template_id,
+                    system_prompt,
+                    user_template,
+                    prompt_hash,
+                    timestamp,
+                ),
+            )
+
+        if session_id:
+            session = conn.execute(
+                "SELECT * FROM agent_sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if not session:
+                raise ValueError(f"诊断会话不存在: {session_id}")
+        else:
+            session_id = _new_id("session")
+            session = None
+
+        session_status = "completed" if model_status == "success" else "failed"
+        if session:
+            conn.execute(
+                """UPDATE agent_sessions
+                   SET model_id=?, prompt_version_id=COALESCE(?, prompt_version_id),
+                       status=?, updated_at_utc=?, ended_at_utc=?
+                   WHERE session_id=?""",
+                (
+                    model_id,
+                    prompt_version_id,
+                    session_status,
+                    timestamp,
+                    timestamp,
+                    session_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO agent_sessions
+                   (session_id, title, created_by, model_id, prompt_version_id,
+                    status, started_at_utc, updated_at_utc, ended_at_utc)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    (question[:100] or "未命名诊断会话"),
+                    requested_by,
+                    model_id,
+                    prompt_version_id,
+                    session_status,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+        seq = _next_message_seq_conn(conn, session_id)
+        user_message_id = _new_id("msg")
+        conn.execute(
+            """INSERT INTO agent_messages
+               (message_id, session_id, seq_no, role, content_text, content_json, created_at_utc)
+               VALUES (?, ?, ?, 'user', ?, ?, ?)""",
+            (
+                user_message_id,
+                session_id,
+                seq,
+                question,
+                json.dumps({"question": question}, ensure_ascii=False),
+                timestamp,
+            ),
+        )
+
+        rendered_messages_json = json.dumps(context_messages, ensure_ascii=False)
+        rendered_prompt_redacted = "\n\n".join(
+            str(message.get("content") or "")
+            for message in context_messages
+            if isinstance(message, dict)
+        )
+        snapshot_id = _new_id("ctx")
+        conn.execute(
+            """INSERT INTO context_snapshots
+               (snapshot_id, session_id, message_id, prompt_version_id,
+                rendered_messages_json, rendered_prompt_redacted, prompt_hash,
+                token_count, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                snapshot_id,
+                session_id,
+                user_message_id,
+                prompt_version_id,
+                rendered_messages_json,
+                rendered_prompt_redacted,
+                _sha256(rendered_messages_json),
+                max(1, len(rendered_prompt_redacted) // 4),
+                timestamp,
+            ),
+        )
+
+        normalized_kb_status = (
+            kb_status if kb_status in ("success", "empty", "disabled", "error") else "error"
+        )
+        query_id = _new_id("retrieval")
+        conn.execute(
+            """INSERT INTO retrieval_queries
+               (query_id, session_id, message_id, query_text, filters_json,
+                top_k, status, error_message, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                query_id,
+                session_id,
+                user_message_id,
+                question,
+                _json_text(retrieval_filters),
+                top_k,
+                normalized_kb_status,
+                kb_error,
+                timestamp,
+            ),
+        )
+        hits_by_doc_id: dict[str, list[dict]] = {}
+        for rank, hit in enumerate(retrieved_docs or [], 1):
+            chunk = _kb_chunk_for_hit_conn(conn, hit)
+            doc_id = str(hit.get("id") or hit.get("doc_id") or "")
+            if not doc_id:
+                continue
+            hit_id = _new_id("hit")
+            content = hit.get("content") or (chunk["content"] if chunk else None)
+            content_hash = (
+                chunk["content_hash"] if chunk else _sha256(str(content or ""))
+            )
+            conn.execute(
+                """INSERT INTO retrieval_hits
+                   (hit_id, query_id, chunk_id, rank_no, distance, doc_id, title,
+                    category, applicable_device, version, source, content,
+                    content_hash, created_at_utc)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    hit_id,
+                    query_id,
+                    chunk["chunk_id"] if chunk else None,
+                    rank,
+                    hit.get("distance"),
+                    doc_id,
+                    hit.get("title") or (chunk["title"] if chunk else None),
+                    hit.get("category") or (chunk["category"] if chunk else None),
+                    hit.get("applicable_device")
+                    or (chunk["applicable_device"] if chunk else None),
+                    hit.get("version") or (chunk["version"] if chunk else None),
+                    hit.get("source") or (chunk["source"] if chunk else None),
+                    content,
+                    content_hash,
+                    timestamp,
+                ),
+            )
+            hit_record = {
+                "hit_id": hit_id,
+                "doc_id": doc_id,
+                "rank_no": rank,
+                "chunk": dict(chunk) if chunk else None,
+            }
+            hits_by_doc_id.setdefault(doc_id, []).append(hit_record)
+
+        seq = _next_message_seq_conn(conn, session_id)
+        assistant_message_id = _new_id("msg")
+        conn.execute(
+            """INSERT INTO agent_messages
+               (message_id, session_id, seq_no, role, content_text, content_json, created_at_utc)
+               VALUES (?, ?, ?, 'assistant', ?, ?, ?)""",
+            (
+                assistant_message_id,
+                session_id,
+                seq,
+                answer_text,
+                answer_text,
+                timestamp,
+            ),
+        )
+
+        provider = str(params.get("_provider") or "openai_compatible")
+        usage = params.get("_usage") or {}
+        public_params = {
+            key: value for key, value in params.items() if not key.startswith("_")
+        }
+        model_call_id = _new_id("modelcall")
+        response_blob_id = _store_blob_conn(conn, answer_text, "application/json")
+        conn.execute(
+            """INSERT INTO model_calls
+               (call_id, session_id, message_id, context_snapshot_id, provider,
+                model, request_id, params_json, input_tokens, output_tokens,
+                latency_ms, status, error_code, error_message, response_blob_id,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                model_call_id,
+                session_id,
+                assistant_message_id,
+                snapshot_id,
+                provider,
+                model_id,
+                params.get("_request_id"),
+                json.dumps(public_params, ensure_ascii=False),
+                usage.get("prompt_tokens") if isinstance(usage, dict) else None,
+                usage.get("completion_tokens") if isinstance(usage, dict) else None,
+                response_time_ms,
+                model_status if model_status in ("success", "error") else "error",
+                model_error_code,
+                model_error_message,
+                response_blob_id,
+                timestamp,
+            ),
+        )
+
+        retrieved_doc_ids = [
+            str(hit.get("id") or hit.get("doc_id"))
+            for hit in (retrieved_docs or [])
+            if hit.get("id") or hit.get("doc_id")
+        ]
+        cur = conn.execute(
+            """INSERT INTO diagnosis_records
+               (created_at, question, model_id, prompt_template_id, llm_params_json,
+                retrieved_doc_ids_json, evidence_json, answer_json, use_kb,
+                response_time_ms, session_id, retrieval_query_id,
+                context_snapshot_id, model_call_id, kb_status,
+                total_response_time_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                timestamp,
+                question,
+                model_id,
+                prompt_template_id,
+                json.dumps(public_params, ensure_ascii=False),
+                json.dumps(retrieved_doc_ids, ensure_ascii=False),
+                json.dumps(evidence, ensure_ascii=False),
+                json.dumps(answer, ensure_ascii=False),
+                1 if use_kb else 0,
+                response_time_ms,
+                session_id,
+                query_id,
+                snapshot_id,
+                model_call_id,
+                normalized_kb_status,
+                total_response_time_ms,
+            ),
+        )
+        diagnosis_id = int(cur.lastrowid)
+
+        causes = answer.get("possible_causes") or []
+        root_cause = ""
+        if causes and isinstance(causes[0], dict):
+            root_cause = str(causes[0].get("cause") or "")
+        confidence = (
+            "high"
+            if model_status == "success" and evidence and retrieved_docs
+            else "medium" if model_status == "success" and evidence
+            else "low"
+        )
+        conclusion_id = _new_id("conclusion")
+        conn.execute(
+            """INSERT INTO diagnosis_conclusions
+               (conclusion_id, diagnosis_id, session_id, final_message_id,
+                fault_phenomenon, root_cause, missing_information, confidence,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                conclusion_id,
+                diagnosis_id,
+                session_id,
+                assistant_message_id,
+                answer.get("fault_phenomenon"),
+                root_cause or None,
+                answer.get("missing_information"),
+                confidence,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            "UPDATE diagnosis_records SET conclusion_id=? WHERE id=?",
+            (conclusion_id, diagnosis_id),
+        )
+
+        referenced_observation_ids = set()
+        referenced_evidence_pairs = set()
+        for item in answer.get("evidence_used") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("observation_id"):
+                referenced_observation_ids.add(item["observation_id"])
+            if item.get("device_name") and item.get("collected_at"):
+                referenced_evidence_pairs.add(
+                    (item["device_name"], item["collected_at"])
+                )
+
+        for evidence_item in evidence:
+            if not isinstance(evidence_item, dict):
+                continue
+            observation_id = evidence_item.get("observation_id")
+            item_id = evidence_item.get("item_id")
+            if not observation_id and not item_id:
+                continue
+            if observation_id and not conn.execute(
+                "SELECT 1 FROM state_observations WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone():
+                observation_id = None
+            if item_id and not conn.execute(
+                "SELECT 1 FROM collection_items WHERE item_id=?",
+                (item_id,),
+            ).fetchone():
+                item_id = None
+            if not observation_id and not item_id:
+                continue
+            referenced = bool(
+                observation_id in referenced_observation_ids
+                or (
+                    evidence_item.get("device_name"),
+                    evidence_item.get("collected_at"),
+                )
+                in referenced_evidence_pairs
+            )
+            conn.execute(
+                """INSERT INTO evidence_links
+                   (link_id, conclusion_id, link_type, observation_id, item_id,
+                    retrieval_hit_id, tool_call_result_id, claim, role, created_at_utc)
+                   VALUES (?, ?, 'device_evidence', ?, ?, NULL, NULL, ?, ?, ?)""",
+                (
+                    _new_id("evlink"),
+                    conclusion_id,
+                    observation_id,
+                    item_id,
+                    evidence_item.get("summary"),
+                    "supporting" if referenced else "context",
+                    timestamp,
+                ),
+            )
+
+        referenced_kb_ids = set()
+        for key in ("possible_causes", "fix_suggestions"):
+            for item in answer.get(key) or []:
+                if isinstance(item, dict):
+                    referenced_kb_ids.update(
+                        str(ref) for ref in (item.get("kb_refs") or [])
+                    )
+        for doc_id, hit_records in hits_by_doc_id.items():
+            for hit_record in hit_records:
+                conn.execute(
+                    """INSERT INTO evidence_links
+                       (link_id, conclusion_id, link_type, observation_id, item_id,
+                        retrieval_hit_id, tool_call_result_id, claim, role, created_at_utc)
+                       VALUES (?, ?, 'knowledge', NULL, NULL, ?, NULL, ?, ?, ?)""",
+                    (
+                        _new_id("evlink"),
+                        conclusion_id,
+                        hit_record["hit_id"],
+                        f"检索知识片段 {doc_id}",
+                        "supporting" if doc_id in referenced_kb_ids else "context",
+                        timestamp,
+                    ),
+                )
+
+    return {
+        "diagnosis_id": diagnosis_id,
+        "session_id": session_id,
+        "user_message_id": user_message_id,
+        "assistant_message_id": assistant_message_id,
+        "context_snapshot_id": snapshot_id,
+        "retrieval_query_id": query_id,
+        "model_call_id": model_call_id,
+        "conclusion_id": conclusion_id,
+    }
+
+
+def list_agent_sessions(limit: int = 50) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT s.*,
+                      (SELECT COUNT(*) FROM agent_messages m
+                       WHERE m.session_id=s.session_id) AS message_count,
+                      (SELECT COUNT(*) FROM diagnosis_conclusions c
+                       WHERE c.session_id=s.session_id) AS conclusion_count
+               FROM agent_sessions s
+               ORDER BY s.updated_at_utc DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_agent_session(session_id: str) -> dict | None:
+    with get_conn() as conn:
+        session = conn.execute(
+            "SELECT * FROM agent_sessions WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        if not session:
+            return None
+        messages = conn.execute(
+            """SELECT * FROM agent_messages
+               WHERE session_id=? ORDER BY seq_no""",
+            (session_id,),
+        ).fetchall()
+        contexts = conn.execute(
+            """SELECT * FROM context_snapshots
+               WHERE session_id=? ORDER BY created_at_utc""",
+            (session_id,),
+        ).fetchall()
+        tool_calls = conn.execute(
+            """SELECT tc.*, tr.tool_name, tr.transport
+               FROM tool_calls tc
+               JOIN tool_registry tr ON tr.tool_id=tc.tool_id
+               WHERE tc.session_id=? ORDER BY tc.started_at_utc""",
+            (session_id,),
+        ).fetchall()
+        tool_results = conn.execute(
+            """SELECT tcr.*, tc.session_id, tr.tool_name
+               FROM tool_call_results tcr
+               JOIN tool_calls tc ON tc.tool_call_id=tcr.tool_call_id
+               JOIN tool_registry tr ON tr.tool_id=tc.tool_id
+               WHERE tc.session_id=? ORDER BY tcr.created_at_utc""",
+            (session_id,),
+        ).fetchall()
+        model_calls = conn.execute(
+            """SELECT * FROM model_calls
+               WHERE session_id=? ORDER BY created_at_utc""",
+            (session_id,),
+        ).fetchall()
+        conclusions = conn.execute(
+            """SELECT * FROM diagnosis_conclusions
+               WHERE session_id=? ORDER BY created_at_utc""",
+            (session_id,),
+        ).fetchall()
+    return {
+        "session": dict(session),
+        "messages": [dict(row) for row in messages],
+        "context_snapshots": [dict(row) for row in contexts],
+        "tool_calls": [dict(row) for row in tool_calls],
+        "tool_results": [dict(row) for row in tool_results],
+        "model_calls": [dict(row) for row in model_calls],
+        "conclusions": [dict(row) for row in conclusions],
+    }
+
+
+def get_diagnosis_detail(diagnosis_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM diagnosis_records WHERE id=?",
+            (diagnosis_id,),
+        ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        retrieved_docs = []
+        if record.get("retrieval_query_id"):
+            hits = conn.execute(
+                """SELECT * FROM retrieval_hits
+                   WHERE query_id=? ORDER BY rank_no""",
+                (record["retrieval_query_id"],),
+            ).fetchall()
+            retrieved_docs = [
+                {
+                    "id": hit["doc_id"],
+                    "hit_id": hit["hit_id"],
+                    "chunk_id": hit["chunk_id"],
+                    "rank": hit["rank_no"],
+                    "distance": hit["distance"],
+                    "title": hit["title"],
+                    "category": hit["category"],
+                    "applicable_device": hit["applicable_device"],
+                    "version": hit["version"],
+                    "source": hit["source"],
+                    "content": hit["content"],
+                    "content_hash": hit["content_hash"],
+                }
+                for hit in hits
+            ]
+        conclusion = None
+        evidence_links = []
+        changes = []
+        if record.get("conclusion_id"):
+            conclusion_row = conn.execute(
+                """SELECT * FROM diagnosis_conclusions
+                   WHERE conclusion_id=?""",
+                (record["conclusion_id"],),
+            ).fetchone()
+            conclusion = dict(conclusion_row) if conclusion_row else None
+            link_rows = conn.execute(
+                """SELECT * FROM evidence_links
+                   WHERE conclusion_id=? ORDER BY created_at_utc, link_id""",
+                (record["conclusion_id"],),
+            ).fetchall()
+            evidence_links = [dict(link) for link in link_rows]
+        if record.get("id"):
+            change_rows = conn.execute(
+                """SELECT * FROM change_requests
+                   WHERE diagnosis_id=? OR conclusion_id=?
+                   ORDER BY created_at_utc DESC""",
+                (record["id"], record.get("conclusion_id")),
+            ).fetchall()
+            changes = [dict(change) for change in change_rows]
+
+    session = get_agent_session(record["session_id"]) if record.get("session_id") else None
+    return {
+        "diagnosis": record,
+        "retrieved_docs": retrieved_docs,
+        "conclusion": conclusion,
+        "evidence_links": evidence_links,
+        "session": session,
+        "changes": changes,
+    }
+
+
+def list_tools(enabled_only: bool = True) -> list[dict]:
+    with get_conn() as conn:
+        sql = "SELECT * FROM tool_registry"
+        if enabled_only:
+            sql += " WHERE enabled=1"
+        rows = conn.execute(sql + " ORDER BY tool_name").fetchall()
+    tools = []
+    for row in rows:
+        item = dict(row)
+        item["input_schema"] = _json_value(item.pop("input_schema_json")) or {}
+        tools.append(item)
+    return tools
+
+
+def get_tool(tool_name: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM tool_registry WHERE tool_name=?",
+            (tool_name,),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    item["input_schema"] = _json_value(item.pop("input_schema_json")) or {}
+    return item
+
+
+def start_tool_call(
+    tool_name: str,
+    arguments: dict | None = None,
+    session_id: str | None = None,
+    message_id: str | None = None,
+) -> dict:
+    init_db()
+    tool = get_tool(tool_name)
+    if not tool:
+        raise ValueError(f"工具未注册: {tool_name}")
+    if not tool["enabled"]:
+        raise ValueError(f"工具已禁用: {tool_name}")
+    if not tool["read_only"]:
+        raise ValueError(f"第二期只允许调用只读工具: {tool_name}")
+    timestamp = now_iso()
+    tool_call_id = _new_id("toolcall")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO tool_calls
+               (tool_call_id, session_id, message_id, tool_id, arguments_json,
+                status, error_code, error_message, started_at_utc,
+                finished_at_utc, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, 'running', NULL, NULL, ?, NULL, ?)""",
+            (
+                tool_call_id,
+                session_id,
+                message_id,
+                tool["tool_id"],
+                json.dumps(arguments or {}, ensure_ascii=False),
+                timestamp,
+                timestamp,
+            ),
+        )
+    return {
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "tool": tool,
+        "arguments": arguments or {},
+        "started_at_utc": timestamp,
+    }
+
+
+def finish_tool_call(
+    tool_call_id: str,
+    *,
+    status: str,
+    result: Any = None,
+    result_kind: str = "json",
+    collection_run_id: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> dict:
+    timestamp = now_iso()
+    result_text = json.dumps(result, ensure_ascii=False) if result is not None else "{}"
+    with get_conn() as conn:
+        call = conn.execute(
+            "SELECT * FROM tool_calls WHERE tool_call_id=?",
+            (tool_call_id,),
+        ).fetchone()
+        if not call:
+            raise ValueError(f"工具调用不存在: {tool_call_id}")
+        conn.execute(
+            """UPDATE tool_calls
+               SET status=?, error_code=?, error_message=?, finished_at_utc=?
+               WHERE tool_call_id=?""",
+            (status, error_code, error_message, timestamp, tool_call_id),
+        )
+        result_id = _new_id("toolresult")
+        blob_id = _store_blob_conn(conn, result_text, "application/json")
+        conn.execute(
+            """INSERT INTO tool_call_results
+               (result_id, tool_call_id, result_kind, collection_run_id,
+                result_json, blob_id, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                result_id,
+                tool_call_id,
+                result_kind,
+                collection_run_id,
+                result_text,
+                blob_id,
+                timestamp,
+            ),
+        )
+    return {
+        "tool_call_id": tool_call_id,
+        "result_id": result_id,
+        "collection_run_id": collection_run_id,
+        "status": status,
+        "result": result,
+        "finished_at_utc": timestamp,
+    }
+
+
+def get_tool_call(tool_call_id: str) -> dict | None:
+    with get_conn() as conn:
+        call = conn.execute(
+            """SELECT tc.*, tr.tool_name, tr.transport, tr.read_only
+               FROM tool_calls tc
+               JOIN tool_registry tr ON tr.tool_id=tc.tool_id
+               WHERE tc.tool_call_id=?""",
+            (tool_call_id,),
+        ).fetchone()
+        if not call:
+            return None
+        result = conn.execute(
+            """SELECT * FROM tool_call_results
+               WHERE tool_call_id=?""",
+            (tool_call_id,),
+        ).fetchone()
+    payload = dict(call)
+    payload["arguments"] = _json_value(payload.pop("arguments_json")) or {}
+    payload["result"] = dict(result) if result else None
+    if payload["result"]:
+        payload["result"]["result"] = (
+            _json_value(payload["result"].pop("result_json")) or {}
+        )
+    return payload
+
+
+def _change_event_conn(
+    conn: sqlite3.Connection,
+    change_id: str,
+    event_type: str,
+    actor: str,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    payload: Any = None,
+) -> str:
+    payload_text = _json_text(payload) if payload is not None else None
+    event_id = _new_id("changeevent")
+    conn.execute(
+        """INSERT INTO change_events
+           (event_id, change_id, event_type, actor, from_status, to_status,
+            payload_json, payload_hash, created_at_utc)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            event_id,
+            change_id,
+            event_type,
+            actor,
+            from_status,
+            to_status,
+            payload_text,
+            _sha256(payload_text or f"{change_id}:{event_type}:{actor}"),
+            now_iso(),
+        ),
+    )
+    return event_id
+
+
+def record_change_event(
+    change_id: str,
+    event_type: str,
+    actor: str,
+    *,
+    payload: Any = None,
+    to_status: str | None = None,
+) -> str:
+    """追加一条变更事件，供业务层的失败或人工备注使用。"""
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        return _change_event_conn(
+            conn,
+            change_id,
+            event_type,
+            actor,
+            change["status"],
+            to_status,
+            payload,
+        )
+
+
+def _get_change_row_conn(conn: sqlite3.Connection, change_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM change_requests WHERE change_id=?",
+        (change_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"变更请求不存在: {change_id}")
+    return row
+
+
+def _require_verified_backup_conn(conn: sqlite3.Connection, change_id: str) -> None:
+    row = conn.execute(
+        """SELECT 1 FROM config_backups
+           WHERE change_id=? AND backup_type='before' AND verified=1
+           LIMIT 1""",
+        (change_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("执行变更前必须先完成并校验一次配置备份")
+
+
+def create_change_request(
+    *,
+    device_name: str,
+    change_type: str = "software",
+    title: str,
+    description: str | None = None,
+    risk_level: str = "medium",
+    operator: str = "web",
+    diagnosis_id: int | None = None,
+    conclusion_id: str | None = None,
+    session_id: str | None = None,
+    rollback_plan: str | None = None,
+    planned_at_utc: str | None = None,
+    status: str = "draft",
+) -> dict:
+    """创建人工变更请求。变更本身不会自动执行。"""
+    init_db()
+    if change_type not in ("physical", "software", "mixed"):
+        raise ValueError("change_type 必须是 physical、software 或 mixed")
+    if risk_level not in ("low", "medium", "high"):
+        raise ValueError("risk_level 必须是 low、medium 或 high")
+    if status not in (
+        "draft",
+        "pending_approval",
+        "approved",
+        "rejected",
+        "cancelled",
+    ):
+        raise ValueError("新建变更的 status 必须是 draft、pending_approval、approved、rejected 或 cancelled")
+    if not title.strip():
+        raise ValueError("变更标题不能为空")
+
+    with get_conn() as conn:
+        device = _resolve_device_conn(conn, device_name)
+        if not device:
+            raise ValueError(f"设备不存在: {device_name}")
+        if diagnosis_id and not conclusion_id:
+            diagnosis = conn.execute(
+                "SELECT * FROM diagnosis_records WHERE id=?",
+                (diagnosis_id,),
+            ).fetchone()
+            if diagnosis:
+                conclusion_id = diagnosis["conclusion_id"]
+                session_id = session_id or diagnosis["session_id"]
+        if conclusion_id and not session_id:
+            conclusion = conn.execute(
+                "SELECT * FROM diagnosis_conclusions WHERE conclusion_id=?",
+                (conclusion_id,),
+            ).fetchone()
+            if conclusion:
+                session_id = conclusion["session_id"]
+        change_id = _new_id("change")
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO change_requests
+               (change_id, conclusion_id, diagnosis_id, session_id, device_id,
+                device_name, change_type, title, description, risk_level, status,
+                requested_by, approved_by, planned_at_utc, started_at_utc,
+                finished_at_utc, rollback_plan, legacy_action_id,
+                created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL,
+                       ?, NULL, ?, ?)""",
+            (
+                change_id,
+                conclusion_id,
+                diagnosis_id,
+                session_id,
+                device["device_id"],
+                device["device_name"],
+                change_type,
+                title.strip(),
+                description,
+                risk_level,
+                status,
+                operator,
+                planned_at_utc,
+                rollback_plan,
+                timestamp,
+                timestamp,
+            ),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "created",
+            operator,
+            None,
+            status,
+            {
+                "device_name": device["device_name"],
+                "change_type": change_type,
+                "title": title.strip(),
+            },
+        )
+    return {
+        "change_id": change_id,
+        "device_id": device["device_id"],
+        "device_name": device["device_name"],
+        "status": status,
+    }
+
+
+def list_changes(limit: int = 50, status: str | None = None) -> list[dict]:
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                """SELECT c.*, d.site_id, s.name AS site
+                   FROM change_requests c
+                   LEFT JOIN devices d ON d.device_id=c.device_id
+                   LEFT JOIN sites s ON s.site_id=d.site_id
+                   WHERE c.status=? ORDER BY c.updated_at_utc DESC LIMIT ?""",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT c.*, d.site_id, s.name AS site
+                   FROM change_requests c
+                   LEFT JOIN devices d ON d.device_id=c.device_id
+                   LEFT JOIN sites s ON s.site_id=d.site_id
+                   ORDER BY c.updated_at_utc DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_change(change_id: str) -> dict | None:
+    with get_conn() as conn:
+        change = conn.execute(
+            """SELECT c.*, d.device_key, d.mgmt_ip, d.device_type,
+                      s.name AS site
+               FROM change_requests c
+               LEFT JOIN devices d ON d.device_id=c.device_id
+               LEFT JOIN sites s ON s.site_id=d.site_id
+               WHERE c.change_id=?""",
+            (change_id,),
+        ).fetchone()
+        if not change:
+            return None
+        steps = conn.execute(
+            "SELECT * FROM change_steps WHERE change_id=? ORDER BY seq_no",
+            (change_id,),
+        ).fetchall()
+        approvals = conn.execute(
+            """SELECT * FROM change_approvals
+               WHERE change_id=? ORDER BY created_at_utc""",
+            (change_id,),
+        ).fetchall()
+        events = conn.execute(
+            """SELECT * FROM change_events
+               WHERE change_id=? ORDER BY created_at_utc, rowid""",
+            (change_id,),
+        ).fetchall()
+        executions = conn.execute(
+            """SELECT ce.*, rb.content_text AS stdout_text,
+                      reb.content_text AS stderr_text
+               FROM command_executions ce
+               LEFT JOIN raw_blobs rb ON rb.blob_id=ce.stdout_blob_id
+               LEFT JOIN raw_blobs reb ON reb.blob_id=ce.stderr_blob_id
+               JOIN change_steps cs ON cs.step_id=ce.step_id
+               WHERE cs.change_id=? ORDER BY ce.created_at_utc""",
+            (change_id,),
+        ).fetchall()
+        physical = conn.execute(
+            """SELECT pa.*, rb.content_text AS evidence_text
+               FROM physical_actions pa
+               LEFT JOIN raw_blobs rb ON rb.blob_id=pa.evidence_blob_id
+               JOIN change_steps cs ON cs.step_id=pa.step_id
+               WHERE cs.change_id=? ORDER BY pa.performed_at_utc""",
+            (change_id,),
+        ).fetchall()
+        backups = conn.execute(
+            "SELECT * FROM config_backups WHERE change_id=? ORDER BY captured_at_utc",
+            (change_id,),
+        ).fetchall()
+        rechecks = conn.execute(
+            "SELECT * FROM rechecks WHERE change_id=? ORDER BY executed_at_utc",
+            (change_id,),
+        ).fetchall()
+        attachments = conn.execute(
+            """SELECT * FROM attachments
+               WHERE (owner_type='change' AND owner_id=?)
+                  OR (owner_type='step' AND owner_id IN
+                      (SELECT step_id FROM change_steps WHERE change_id=?))
+                  OR (owner_type='physical_action' AND owner_id IN
+                      (SELECT action_id FROM physical_actions pa
+                       JOIN change_steps cs ON cs.step_id=pa.step_id
+                       WHERE cs.change_id=?))
+               ORDER BY created_at_utc""",
+            (change_id, change_id, change_id),
+        ).fetchall()
+        conclusion = None
+        if change["conclusion_id"]:
+            conclusion_row = conn.execute(
+                "SELECT * FROM diagnosis_conclusions WHERE conclusion_id=?",
+                (change["conclusion_id"],),
+            ).fetchone()
+            conclusion = dict(conclusion_row) if conclusion_row else None
+    return {
+        "change": dict(change),
+        "steps": [dict(row) for row in steps],
+        "approvals": [dict(row) for row in approvals],
+        "events": [
+            {**dict(row), "payload": _json_value(row["payload_json"]) or {}}
+            for row in events
+        ],
+        "command_executions": [dict(row) for row in executions],
+        "physical_actions": [dict(row) for row in physical],
+        "config_backups": [dict(row) for row in backups],
+        "rechecks": [
+            {
+                **dict(row),
+                "expected": _json_value(row["expected_json"]) or {},
+                "actual": _json_value(row["actual_json"]) or {},
+            }
+            for row in rechecks
+        ],
+        "attachments": [dict(row) for row in attachments],
+        "conclusion": conclusion,
+    }
+
+
+def list_changes_for_diagnosis(diagnosis_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM change_requests
+               WHERE diagnosis_id=? ORDER BY created_at_utc DESC""",
+            (diagnosis_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def add_change_step(
+    change_id: str,
+    *,
+    step_type: str,
+    title: str,
+    source_type: str = "human",
+    command_text: str | None = None,
+    expected_result: str | None = None,
+    requires_approval: bool = False,
+    operator: str = "web",
+) -> dict:
+    init_db()
+    if step_type not in ("physical", "software", "verification"):
+        raise ValueError("step_type 必须是 physical、software 或 verification")
+    if source_type not in ("llm", "human"):
+        raise ValueError("source_type 必须是 llm 或 human")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] in ("completed", "cancelled", "rejected", "rolled_back"):
+            raise ValueError(f"当前状态 {change['status']} 不允许新增步骤")
+        seq_row = conn.execute(
+            "SELECT COALESCE(MAX(seq_no), 0) + 1 FROM change_steps WHERE change_id=?",
+            (change_id,),
+        ).fetchone()
+        seq_no = int(seq_row[0])
+        step_id = _new_id("step")
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO change_steps
+               (step_id, change_id, seq_no, step_type, source_type, title,
+                command_text, expected_result, requires_approval, status,
+                executed_by, started_at_utc, finished_at_utc, result_summary,
+                created_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL,
+                       NULL, ?, ?)""",
+            (
+                step_id,
+                change_id,
+                seq_no,
+                step_type,
+                source_type,
+                title.strip(),
+                command_text,
+                expected_result,
+                1 if requires_approval else 0,
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            "UPDATE change_requests SET updated_at_utc=? WHERE change_id=?",
+            (timestamp, change_id),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "step_added",
+            operator,
+            change["status"],
+            change["status"],
+            {"step_id": step_id, "step_type": step_type, "source_type": source_type},
+        )
+    return {"step_id": step_id, "seq_no": seq_no, "status": "pending"}
+
+
+def approve_change(
+    change_id: str,
+    *,
+    approver: str,
+    decision: str = "approved",
+    comment: str | None = None,
+) -> dict:
+    if decision not in ("approved", "rejected", "changes_requested"):
+        raise ValueError("decision 必须是 approved、rejected 或 changes_requested")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] in ("completed", "cancelled", "rolled_back"):
+            raise ValueError(f"当前状态 {change['status']} 不允许审批")
+        approval_id = _new_id("approval")
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO change_approvals
+               (approval_id, change_id, approver, decision, comment, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (approval_id, change_id, approver, decision, comment, timestamp),
+        )
+        target_status = {
+            "approved": "approved",
+            "rejected": "rejected",
+            "changes_requested": "pending_approval",
+        }[decision]
+        conn.execute(
+            """UPDATE change_requests
+               SET status=?, approved_by=?, updated_at_utc=? WHERE change_id=?""",
+            (
+                target_status,
+                approver if decision == "approved" else change["approved_by"],
+                timestamp,
+                change_id,
+            ),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "approval_recorded",
+            approver,
+            change["status"],
+            target_status,
+            {"decision": decision, "comment": comment, "approval_id": approval_id},
+        )
+    return {"change_id": change_id, "approval_id": approval_id, "status": target_status}
+
+
+def start_change(change_id: str, *, operator: str) -> dict:
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] not in ("approved", "executing"):
+            raise ValueError("只有已审批或执行中的变更可以开始执行")
+        timestamp = now_iso()
+        conn.execute(
+            """UPDATE change_requests
+               SET status='executing', started_at_utc=COALESCE(started_at_utc, ?),
+                   updated_at_utc=? WHERE change_id=?""",
+            (timestamp, timestamp, change_id),
+        )
+        _change_event_conn(
+            conn, change_id, "execution_started", operator,
+            change["status"], "executing", None,
+        )
+    return {"change_id": change_id, "status": "executing", "started_at_utc": timestamp}
+
+
+def record_command_execution(
+    change_id: str,
+    step_id: str,
+    *,
+    command_text: str,
+    output: str | None,
+    stderr: str | None = None,
+    exit_code: int | None = 0,
+    operator: str = "web",
+    execution_mode: str = "manual",
+    result_summary: str | None = None,
+    started_at_utc: str | None = None,
+    finished_at_utc: str | None = None,
+) -> dict:
+    if execution_mode not in ("manual", "readonly", "approved_automation"):
+        raise ValueError("execution_mode 不合法")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] not in ("approved", "executing"):
+            raise ValueError("只有已审批或执行中的变更可以记录命令执行")
+        _require_verified_backup_conn(conn, change_id)
+        step = conn.execute(
+            "SELECT * FROM change_steps WHERE step_id=? AND change_id=?",
+            (step_id, change_id),
+        ).fetchone()
+        if not step:
+            raise ValueError("变更步骤不存在")
+        if step["step_type"] == "physical":
+            raise ValueError("物理步骤请使用物理操作记录接口")
+        timestamp = now_iso()
+        start = started_at_utc or timestamp
+        finish = finished_at_utc or timestamp
+        stdout_blob_id = _store_blob_conn(conn, output, "text/plain")
+        stderr_blob_id = _store_blob_conn(conn, stderr, "text/plain")
+        execution_id = _new_id("execution")
+        conn.execute(
+            """INSERT INTO command_executions
+               (execution_id, step_id, device_id, command_text, execution_mode,
+                executed_by, started_at_utc, finished_at_utc, exit_code,
+                stdout_blob_id, stderr_blob_id, result_summary, approval_id,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+            (
+                execution_id,
+                step_id,
+                change["device_id"],
+                command_text,
+                execution_mode,
+                operator,
+                start,
+                finish,
+                exit_code,
+                stdout_blob_id,
+                stderr_blob_id,
+                result_summary,
+                timestamp,
+            ),
+        )
+        step_status = "success" if exit_code == 0 else "failed"
+        conn.execute(
+            """UPDATE change_steps
+               SET status=?, executed_by=?, started_at_utc=?, finished_at_utc=?,
+                   result_summary=?, updated_at_utc=? WHERE step_id=?""",
+            (
+                step_status,
+                operator,
+                start,
+                finish,
+                result_summary,
+                timestamp,
+                step_id,
+            ),
+        )
+        conn.execute(
+            """UPDATE change_requests
+               SET status=CASE WHEN status='approved' THEN 'executing' ELSE status END,
+                   started_at_utc=COALESCE(started_at_utc, ?), updated_at_utc=?
+               WHERE change_id=?""",
+            (start, timestamp, change_id),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "command_executed",
+            operator,
+            change["status"],
+            "executing" if change["status"] == "approved" else change["status"],
+            {
+                "execution_id": execution_id,
+                "step_id": step_id,
+                "command_text": command_text,
+                "exit_code": exit_code,
+            },
+        )
+    return {
+        "execution_id": execution_id,
+        "step_id": step_id,
+        "step_status": step_status,
+        "exit_code": exit_code,
+    }
+
+
+def record_physical_action(
+    change_id: str,
+    step_id: str,
+    *,
+    action_type: str,
+    description: str,
+    operator: str = "web",
+    result: str | None = None,
+    evidence_text: str | None = None,
+    performed_at_utc: str | None = None,
+) -> dict:
+    if action_type not in ("cable", "power", "console", "module", "other"):
+        raise ValueError("action_type 不合法")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] not in ("approved", "executing"):
+            raise ValueError("只有已审批或执行中的变更可以记录物理操作")
+        _require_verified_backup_conn(conn, change_id)
+        step = conn.execute(
+            "SELECT * FROM change_steps WHERE step_id=? AND change_id=?",
+            (step_id, change_id),
+        ).fetchone()
+        if not step:
+            raise ValueError("变更步骤不存在")
+        if step["step_type"] not in ("physical", "verification"):
+            raise ValueError("当前步骤不是物理操作步骤")
+        timestamp = now_iso()
+        performed = performed_at_utc or timestamp
+        evidence_blob_id = _store_blob_conn(conn, evidence_text, "text/plain")
+        action_id = _new_id("physical")
+        conn.execute(
+            """INSERT INTO physical_actions
+               (action_id, step_id, device_id, action_type, description,
+                performed_by, performed_at_utc, evidence_blob_id, result,
+                created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                action_id,
+                step_id,
+                change["device_id"],
+                action_type,
+                description,
+                operator,
+                performed,
+                evidence_blob_id,
+                result,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """UPDATE change_steps
+               SET status='success', executed_by=?, started_at_utc=?,
+                   finished_at_utc=?, result_summary=?, updated_at_utc=?
+               WHERE step_id=?""",
+            (operator, performed, performed, result or description, timestamp, step_id),
+        )
+        conn.execute(
+            """UPDATE change_requests
+               SET status=CASE WHEN status='approved' THEN 'executing' ELSE status END,
+                   started_at_utc=COALESCE(started_at_utc, ?), updated_at_utc=?
+               WHERE change_id=?""",
+            (performed, timestamp, change_id),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "physical_action_recorded",
+            operator,
+            change["status"],
+            "executing" if change["status"] == "approved" else change["status"],
+            {
+                "action_id": action_id,
+                "step_id": step_id,
+                "action_type": action_type,
+                "description": description,
+            },
+        )
+    return {"action_id": action_id, "step_id": step_id, "status": "success"}
+
+
+def record_config_backup(
+    change_id: str,
+    *,
+    content: str,
+    storage_ref: str | None,
+    sha256: str | None,
+    operator: str = "web",
+    backup_type: str = "before",
+    verified: bool = True,
+) -> dict:
+    if backup_type not in ("before", "after", "rollback"):
+        raise ValueError("backup_type 不合法")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] not in ("approved", "executing"):
+            raise ValueError("只有已审批或执行中的变更可以记录配置备份")
+        blob_id = _store_blob_conn(conn, content, "text/plain")
+        digest = sha256 or _sha256(content)
+        backup_id = _new_id("backup")
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO config_backups
+               (backup_id, change_id, device_id, config_snapshot_id, blob_id,
+                sha256, captured_at_utc, backup_type, verified, storage_ref,
+                restore_ref, created_at_utc)
+               VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+            (
+                backup_id,
+                change_id,
+                change["device_id"],
+                blob_id,
+                digest,
+                timestamp,
+                backup_type,
+                1 if verified else 0,
+                storage_ref,
+                timestamp,
+            ),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "config_backup_recorded",
+            operator,
+            change["status"],
+            change["status"],
+            {
+                "backup_id": backup_id,
+                "sha256": digest,
+                "storage_ref": storage_ref,
+                "backup_type": backup_type,
+            },
+        )
+    return {"backup_id": backup_id, "sha256": digest, "storage_ref": storage_ref}
+
+
+def record_recheck(
+    change_id: str,
+    *,
+    collection_run_id: str | None,
+    source_device_id: str | None,
+    source_device_name: str | None,
+    target: str,
+    check_type: str,
+    expected: dict | None,
+    actual: dict | None,
+    pass_fail: str,
+    evidence_observation_id: str | None = None,
+    operator: str = "web",
+    executed_at_utc: str | None = None,
+) -> dict:
+    if pass_fail not in ("pass", "fail", "inconclusive"):
+        raise ValueError("pass_fail 必须是 pass、fail 或 inconclusive")
+    if check_type not in ("ping", "interface", "route", "acl", "application"):
+        raise ValueError("check_type 不合法")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        if change["status"] not in ("approved", "executing"):
+            raise ValueError("只有已审批或执行中的变更可以记录复测")
+        _require_verified_backup_conn(conn, change_id)
+        timestamp = executed_at_utc or now_iso()
+        recheck_id = _new_id("recheck")
+        conn.execute(
+            """INSERT INTO rechecks
+               (recheck_id, change_id, collection_run_id, source_device_id,
+                source_device_name, target, check_type, expected_json,
+                actual_json, pass_fail, evidence_observation_id,
+                executed_at_utc, created_at_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                recheck_id,
+                change_id,
+                collection_run_id,
+                source_device_id,
+                source_device_name,
+                target,
+                check_type,
+                _json_text(expected),
+                _json_text(actual),
+                pass_fail,
+                evidence_observation_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            "UPDATE change_requests SET updated_at_utc=? WHERE change_id=?",
+            (timestamp, change_id),
+        )
+        _change_event_conn(
+            conn,
+            change_id,
+            "recheck_recorded",
+            operator,
+            change["status"],
+            change["status"],
+            {
+                "recheck_id": recheck_id,
+                "pass_fail": pass_fail,
+                "target": target,
+                "collection_run_id": collection_run_id,
+            },
+        )
+    return {"recheck_id": recheck_id, "pass_fail": pass_fail}
+
+
+def complete_change(
+    change_id: str,
+    *,
+    operator: str,
+    outcome: str = "completed",
+) -> dict:
+    if outcome not in ("completed", "failed", "rolled_back"):
+        raise ValueError("outcome 不合法")
+    with get_conn() as conn:
+        change = _get_change_row_conn(conn, change_id)
+        timestamp = now_iso()
+        conn.execute(
+            """UPDATE change_requests
+               SET status=?, finished_at_utc=?, updated_at_utc=?
+               WHERE change_id=?""",
+            (outcome, timestamp, timestamp, change_id),
+        )
+        _change_event_conn(
+            conn, change_id, "change_finished", operator,
+            change["status"], outcome, {"outcome": outcome},
+        )
+    return {"change_id": change_id, "status": outcome, "finished_at_utc": timestamp}
+
+
+def record_health_check(component: str, status: str, details: dict | None = None) -> str:
+    if status not in ("ready", "degraded", "error", "unknown"):
+        raise ValueError("status 不合法")
+    check_id = _new_id("health")
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO health_checks
+               (check_id, component, status, details_json, checked_at_utc)
+               VALUES (?, ?, ?, ?, ?)""",
+            (check_id, component, status, _json_text(details), now_iso()),
+        )
+    return check_id
+
+
+def list_health_checks(limit: int = 50) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM health_checks ORDER BY checked_at_utc DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def insert_manual_action(diagnosis_id, operator, action_desc, backup_ref,

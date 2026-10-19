@@ -1,0 +1,71 @@
+{
+  "tools": [
+    {
+      "tool_name": "query_device_state",
+      "transport": "local",
+      "server_name": "netops_local",
+      "description": "查询已发布采集快照中的设备当前状态与状态事实，只读。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "device_names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "设备名称列表；为空时查询全部设备"
+          },
+          "state_types": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "可选状态类型过滤，如 interface、route、vlan、acl、reachability"
+          }
+        },
+        "additionalProperties": false
+      },
+      "read_only": true,
+      "requires_approval": false,
+      "enabled": true,
+      "version": "phase2"
+    },
+    {
+      "tool_name": "query_collection_history",
+      "transport": "local",
+      "server_name": "netops_local",
+      "description": "查询单台设备最近的采集项历史，用于核对状态变化，只读。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "device_name": {"type": "string"},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20}
+        },
+        "required": ["device_name"],
+        "additionalProperties": false
+      },
+      "read_only": true,
+      "requires_approval": false,
+      "enabled": true,
+      "version": "phase2"
+    },
+    {
+      "tool_name": "run_readonly_collection",
+      "transport": "local",
+      "server_name": "netops_local",
+      "description": "对指定设备执行白名单内的一轮 SSH/SNMP 只读采集，并写入新的采集批次。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "device_names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1
+          }
+        },
+        "required": ["device_names"],
+        "additionalProperties": false
+      },
+      "read_only": true,
+      "requires_approval": false,
+      "enabled": true,
+      "version": "phase2"
+    }
+  ]
+}

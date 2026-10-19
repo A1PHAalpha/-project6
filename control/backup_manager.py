@@ -2,6 +2,7 @@
 配置备份管理：在任何人工确认的配置变更操作之前，必须先备份当前运行配置。
 备份文件存放于 reports/backups/，文件名含设备名和时间戳，供事后审计和回滚参考。
 """
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -54,4 +55,10 @@ def backup_running_config(device: dict, username: str, password: str, timeout: i
     os.chmod(path, 0o600)
 
     logger.info("已备份 %s 配置到 %s", device["device_name"], path)
-    return {"status": "success", "backup_path": path}
+    return {
+        "status": "success",
+        "backup_path": path,
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "raw_config": raw,
+        "device_name": device["device_name"],
+    }

@@ -20,7 +20,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements/dev.txt
       - run: ruff check .
-      - run: python -m compileall -q collector rag_engine knowledge_base control webapp app_bootstrap.py project_config.py
+      - run: python -m compileall -q collector rag_engine knowledge_base control webapp ops_tools app_bootstrap.py project_config.py
 
   test:
     runs-on: ubuntu-latest

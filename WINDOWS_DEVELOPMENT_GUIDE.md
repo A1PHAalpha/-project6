@@ -13,7 +13,7 @@
 
 - `requirements/dev.txt` 与 `requirements/collect.txt` 共解析并安装 118 个包，`pip check` 无依赖冲突。
 - `ruff check .` 通过。
-- 常规单测 `41 passed, 1 deselected`；单独运行的 embedding slow 测试 `1 passed`。
+- 常规单测 `62 passed, 1 deselected`；单独运行的 embedding slow 测试 `1 passed`。
 - `BAAI/bge-small-zh-v1.5` 的 ONNX 模型可下载、可初始化。
 - 真实构建 26 条知识库记录成功。
 - 新进程重新打开持久化 Chroma 索引并检索成功，返回 4 条中文运维资料。
@@ -502,7 +502,7 @@ SSH_LEGACY_ALGOS=true
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-本项目配置默认跳过 slow 测试。本机实测结果为 `41 passed, 1 deselected`。
+本项目配置默认跳过 slow 测试。本机实测结果为 `62 passed, 1 deselected`。
 
 ### 9.3 真实 embedding 回归
 
@@ -548,7 +548,7 @@ $env:HF_HUB_OFFLINE = "1"
 | 中文日志乱码 | Windows 控制台编码与 Python 输出不一致 | 设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 并执行 `chcp 65001` |
 | 启动采集显示 `skipped` | 未配置设备账号/口令 | 检查 `DEVICE_USERNAME`、`DEVICE_PASSWORD`；页面服务仍可正常使用 |
 | 启动采集长期 `running` | SSH/SNMP 目标不可达或超时 | 检查 ZeroTier、路由和 22/161 端口；采集在后台执行 |
-| `pytest` 卡在 TestClient | 受限沙箱阻止本地 socket/socketpair | 在普通 Windows 终端运行；本机在 Codex 沙箱外实测全部通过 |
+| `pytest` 卡在异步 TestClient | 受限沙箱可能阻塞 asyncio 事件循环 | 鉴权测试已改为同步边界测试；完整 HTTP 集成建议在普通 Windows 终端运行 |
 | `./start.sh` 无法执行 | 脚本是 Bash/Linux 实现 | 使用本文的 Python 模块命令 |
 | ZeroTier 命令失败 | 未使用管理员 PowerShell 或 CLI 不在 PATH | 提权运行，先用 `where.exe zerotier-cli` 定位 |
 

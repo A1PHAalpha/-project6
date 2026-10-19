@@ -6,20 +6,33 @@ RAG 故障诊断引擎主流程：
 支持 use_kb=False 模式用于效果测试环节的"无知识库检索"对比。
 """
 import logging
+import time
 
 from collector import db
 from knowledge_base.retriever import retrieve
 
 from .device_extractor import extract_relevant_devices
 from .evidence_builder import build_evidence_for_devices, format_evidence_for_prompt
-from .llm_client import chat_completion, get_model_id, safe_parse_json
-from .prompt_templates import DIAGNOSIS_TEMPLATE_ID, build_messages, format_kb_for_prompt
+from .llm_client import chat_completion, get_model_id, get_provider_name, safe_parse_json
+from .prompt_templates import (
+    DIAGNOSIS_SYSTEM_PROMPT,
+    DIAGNOSIS_TEMPLATE_ID,
+    DIAGNOSIS_USER_TEMPLATE,
+    build_messages,
+    format_kb_for_prompt,
+)
 from .sanitize import sanitize_evidence_list, sanitize_text
 
 logger = logging.getLogger("diagnosis_engine")
 
 
-def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
+def diagnose(
+    question: str,
+    use_kb: bool = True,
+    top_k: int = 4,
+    session_id: str | None = None,
+    requested_by: str = "web",
+) -> dict:
     """
     执行一次完整诊断，返回：
     {
@@ -27,8 +40,11 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
         evidence, retrieved_docs, answer (结构化JSON), response_time_ms
     }
     """
+    started_at = time.perf_counter()
+    question_sanitized = sanitize_text(question)
+
     # 1. 识别相关设备
-    device_names = extract_relevant_devices(question)
+    device_names = extract_relevant_devices(question_sanitized)
 
     # 2. 取最新采集证据（真实数据，不编造）
     evidence = build_evidence_for_devices(device_names)
@@ -38,24 +54,29 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
     # 3. 知识库检索（可关闭，用于效果对比测试）
     kb_hits = []
     kb_error = None
+    kb_status = "disabled"
     if use_kb:
         try:
-            kb_hits = retrieve(question, top_k=top_k)
+            kb_hits = retrieve(question_sanitized, top_k=top_k)
             kb_text = format_kb_for_prompt(kb_hits)
+            kb_status = "success" if kb_hits else "empty"
         except Exception as exc:
             # 本地索引缺失时服务仍可用：降级为仅使用已采集的设备证据。
             logger.warning("知识库检索失败，本次诊断降级运行: %s", exc)
             kb_error = f"{type(exc).__name__}: {exc}"
+            kb_status = "error"
             kb_text = "（知识库当前不可用，本次诊断已降级为仅使用设备证据）"
     else:
         kb_text = "（本次诊断未启用知识库检索，仅用于效果对比测试）"
 
     # 4. 组装 Prompt
-    question_sanitized = sanitize_text(question)
     messages = build_messages(question_sanitized, evidence_text, kb_text)
 
     # 5. 调用 LLM
     model_id = get_model_id()
+    model_status = "success"
+    model_error_code = None
+    model_error_message = None
     try:
         content, elapsed_ms, params_used = chat_completion(messages)
         answer = safe_parse_json(content)
@@ -63,7 +84,14 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
     except Exception as e:
         logger.error("LLM调用失败: %s", e)
         elapsed_ms = 0
-        params_used = {"model": model_id}
+        params_used = {
+            "model": model_id,
+            "_provider": get_provider_name(),
+            "_status": "error",
+        }
+        model_status = "error"
+        model_error_code = type(e).__name__
+        model_error_message = str(e)
         answer = {
             "fault_phenomenon": "LLM调用失败",
             "evidence_used": [],
@@ -75,22 +103,43 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
         }
         error = str(e)
 
-    # 6. 落盘诊断记录（可核查：模型标识/模板/参数/检索来源/证据时间）
-    retrieved_doc_ids = [h["id"] for h in kb_hits]
-    diagnosis_id = db.insert_diagnosis(
+    total_response_time_ms = int((time.perf_counter() - started_at) * 1000)
+
+    # 6. 原子落盘会话、上下文、检索、模型调用、诊断结论和证据引用。
+    persisted = db.save_diagnosis_run(
         question=question,
         model_id=model_id,
         prompt_template_id=DIAGNOSIS_TEMPLATE_ID,
+        prompt_version={
+            "system_prompt": DIAGNOSIS_SYSTEM_PROMPT,
+            "user_template": DIAGNOSIS_USER_TEMPLATE,
+        },
         llm_params=params_used,
-        retrieved_doc_ids=retrieved_doc_ids,
         evidence=evidence_sanitized,  # 脱敏后入库：库内不保留明文凭据
         answer=answer,
         use_kb=1 if use_kb else 0,
+        retrieved_docs=kb_hits,
+        kb_status=kb_status,
+        kb_error=kb_error,
         response_time_ms=elapsed_ms,
+        total_response_time_ms=total_response_time_ms,
+        context_messages=messages,
+        requested_by=requested_by,
+        session_id=session_id,
+        model_status=model_status,
+        model_error_code=model_error_code,
+        model_error_message=model_error_message,
+        top_k=top_k,
     )
+    diagnosis_id = persisted["diagnosis_id"]
 
     return {
         "diagnosis_id": diagnosis_id,
+        "session_id": persisted["session_id"],
+        "conclusion_id": persisted["conclusion_id"],
+        "context_snapshot_id": persisted["context_snapshot_id"],
+        "retrieval_query_id": persisted["retrieval_query_id"],
+        "model_call_id": persisted["model_call_id"],
         "question": question,
         "model_id": model_id,
         "prompt_template_id": DIAGNOSIS_TEMPLATE_ID,
@@ -101,7 +150,8 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
             "status": (
                 "disabled"
                 if not use_kb
-                else "ready" if kb_hits
+                else "ready" if kb_status == "success"
+                else "empty" if kb_status == "empty"
                 else "error" if kb_error
                 else "empty"
             ),
@@ -109,5 +159,6 @@ def diagnose(question: str, use_kb: bool = True, top_k: int = 4) -> dict:
         },
         "answer": answer,
         "response_time_ms": elapsed_ms,
+        "total_response_time_ms": total_response_time_ms,
         "error": error,
     }

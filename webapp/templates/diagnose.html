@@ -11,6 +11,7 @@
     <nav>
         <a href="/">设备总览</a>
         <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
     </nav>
 </header>
 <main>
@@ -18,6 +19,7 @@
     <div class="card">
         <div class="flex-row" style="margin-bottom:10px;">
             <label><input type="checkbox" id="useKb" checked> 启用知识库检索（RAG）</label>
+            <label><input type="checkbox" id="continueSession"> 继续当前诊断会话</label>
         </div>
         <textarea id="question" rows="3" placeholder="例如：分支机构A的PC无法访问总部服务器，请诊断原因"></textarea>
         <div class="flex-row" style="margin-top:10px;">
@@ -44,6 +46,8 @@
 </main>
 
 <script>
+let activeSessionId = null;
+
 function escapeHtml(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -53,16 +57,21 @@ async function submitDiagnose() {
     const question = document.getElementById('question').value.trim();
     if (!question) { alert('请输入问题'); return; }
     const useKb = document.getElementById('useKb').checked;
+    const continueSession = document.getElementById('continueSession').checked;
     document.getElementById('loadingTip').style.display = 'inline';
     document.getElementById('resultArea').innerHTML = '';
     try {
         const resp = await fetch('/api/diagnose', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({question: question, use_kb: useKb})
+            body: JSON.stringify({
+                question: question,
+                use_kb: useKb,
+                session_id: continueSession ? activeSessionId : null
+            })
         });
         const data = await resp.json();
-        renderResult(data, []);
+        renderResult(data, [], null);
     } catch (e) {
         document.getElementById('resultArea').innerHTML = '<div class="card">请求失败: ' + escapeHtml(e) + '</div>';
     } finally {
@@ -82,17 +91,22 @@ async function loadDiagnosis(id) {
         prompt_template_id: rec.prompt_template_id,
         use_kb: !!rec.use_kb,
         response_time_ms: rec.response_time_ms,
+        total_response_time_ms: rec.total_response_time_ms,
+        session_id: rec.session_id,
+        conclusion_id: rec.conclusion_id,
         evidence: JSON.parse(rec.evidence_json || '[]'),
         retrieved_docs_ids: JSON.parse(rec.retrieved_doc_ids_json || '[]'),
+        retrieved_docs: data.retrieved_docs || [],
         answer: JSON.parse(rec.answer_json || '{}'),
         error: null
     };
-    renderResult(result, data.manual_actions || []);
+    renderResult(result, data.manual_actions || [], data.session);
     window.scrollTo({top: document.getElementById('resultArea').offsetTop, behavior: 'smooth'});
 }
 
-function renderResult(data, manualActions) {
+function renderResult(data, manualActions, sessionData) {
     const a = data.answer || {};
+    activeSessionId = data.session_id || activeSessionId;
     let html = '<div class="section-title">诊断结果 #' + data.diagnosis_id + '</div>';
     html += '<div class="card">';
     html += '<p class="muted">模型: ' + escapeHtml(data.model_id) + ' | Prompt模板: ' + escapeHtml(data.prompt_template_id) +
@@ -112,7 +126,7 @@ function renderResult(data, manualActions) {
     html += '<p><strong>可能原因：</strong></p><ul>';
     (a.possible_causes || []).forEach(function(c) {
         html += '<li>' + escapeHtml(c.cause) + ' <span class="confidence">(置信度: ' + escapeHtml(c.confidence) +
-                ', 依据: ' + (c.kb_refs || []).join(', ') + ')</span></li>';
+                ', 依据: ' + (c.kb_refs || []).map(escapeHtml).join(', ') + ')</span></li>';
     });
     html += '</ul>';
 
@@ -124,15 +138,20 @@ function renderResult(data, manualActions) {
     (a.fix_suggestions || []).forEach(function(s, idx) {
         html += '<li>' + escapeHtml(s.action) +
                 (s.requires_manual_confirmation ? ' <span class="badge badge-stale">需人工确认</span>' : '') +
-                ' <span class="confidence">(依据: ' + (s.kb_refs || []).join(', ') + ')</span>' +
-                ' <button class="btn btn-secondary" style="margin-left:6px;" onclick="openConfirmForm(' + data.diagnosis_id + ', ' + idx + ')">人工确认并备份</button>' +
+                ' <span class="confidence">(依据: ' + (s.kb_refs || []).map(escapeHtml).join(', ') + ')</span>' +
+                ' <button class="btn btn-secondary" style="margin-left:6px;" onclick="openChangeForm(' + data.diagnosis_id + ', ' + idx + ')">创建人工变更</button>' +
                 '</li>';
-        html += '<div id="confirmForm_' + data.diagnosis_id + '_' + idx + '" style="display:none;margin:6px 0;padding:8px;background:#f7f9fb;border-radius:4px;">' +
+        html += '<div id="changeForm_' + data.diagnosis_id + '_' + idx + '" style="display:none;margin:6px 0;padding:8px;background:#f7f9fb;border-radius:4px;">' +
                 '<input type="text" id="deviceName_' + idx + '" placeholder="设备名称 (如 BR-A-SW2)" style="margin-bottom:4px;">' +
-                '<input type="text" id="operator_' + idx + '" placeholder="操作人姓名" style="margin-bottom:4px;">' +
-                '<input type="text" id="actionDesc_' + idx + '" value="' + escapeHtml(s.action) + '" style="margin-bottom:4px;">' +
-                '<button class="btn" onclick="confirmAction(' + data.diagnosis_id + ', ' + idx + ')">确认备份并记录</button> ' +
-                '<button class="btn btn-danger" onclick="rejectAction(' + data.diagnosis_id + ', ' + idx + ')">驳回建议</button>' +
+                '<input type="text" id="changeOperator_' + idx + '" placeholder="操作人姓名" style="margin-bottom:4px;">' +
+                '<select id="changeType_' + idx + '" style="margin-bottom:4px;">' +
+                '<option value="software">软件命令</option>' +
+                '<option value="physical">物理操作</option>' +
+                '<option value="mixed">物理+软件</option>' +
+                '</select>' +
+                '<input type="text" id="changeTitle_' + idx + '" value="' + escapeHtml(s.action) + '" style="margin-bottom:4px;">' +
+                '<textarea id="changeDescription_' + idx + '" rows="2" placeholder="变更说明/回滚方案" style="margin-bottom:4px;">' + escapeHtml(s.action) + '</textarea>' +
+                '<button class="btn" onclick="createChange(' + data.diagnosis_id + ', ' + idx + ')">创建变更请求</button>' +
                 '</div>';
     });
     html += '</ul>';
@@ -149,10 +168,61 @@ function renderResult(data, manualActions) {
         html += '<div class="section-title">知识库检索依据</div><div class="card">';
         data.retrieved_docs.forEach(function(doc) {
             html += '<div class="kb-doc"><strong>[' + escapeHtml(doc.id) + '] ' + escapeHtml(doc.title) + '</strong>' +
-                    '<div class="kb-meta">适用设备: ' + escapeHtml(doc.applicable_device) + ' | 来源: ' + escapeHtml(doc.source) + '</div>' +
+                    '<div class="kb-meta">适用设备: ' + escapeHtml(doc.applicable_device || '') +
+                    ' | 版本: ' + escapeHtml(doc.version || '') +
+                    ' | 来源: ' + escapeHtml(doc.source || '') +
+                    ' | 距离: ' + escapeHtml(doc.distance === null || doc.distance === undefined ? '未记录' : doc.distance) + '</div>' +
                     '<div>' + escapeHtml(doc.content) + '</div></div>';
         });
         html += '</div>';
+    }
+
+    if (sessionData && sessionData.messages && sessionData.messages.length) {
+        html += '<details class="card"><summary><strong>完整会话消息（' +
+                sessionData.messages.length + ' 条）</strong></summary>';
+        sessionData.messages.forEach(function(msg) {
+            html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;">' +
+                    '<span class="badge">' + escapeHtml(msg.role) + '</span> ' +
+                    '<span class="muted">' + escapeHtml(msg.created_at_utc) + '</span><br>' +
+                    '<pre style="white-space:pre-wrap;word-break:break-word;">' +
+                    escapeHtml(msg.content_text || '') + '</pre></div>';
+        });
+        html += '</details>';
+    }
+
+    if (sessionData && sessionData.tool_calls && sessionData.tool_calls.length) {
+        html += '<details class="card"><summary><strong>工具调用与结果（' +
+                sessionData.tool_calls.length + ' 次）</strong></summary>';
+        sessionData.tool_calls.forEach(function(call) {
+            html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;">' +
+                    '<span class="badge">' + escapeHtml(call.tool_name) + '</span> ' +
+                    '<span class="muted">' + escapeHtml(call.status) + '</span>' +
+                    '<pre style="white-space:pre-wrap;word-break:break-word;">' +
+                    escapeHtml(call.arguments_json || '') + '</pre>';
+            const result = (sessionData.tool_results || []).find(function(r) {
+                return r.tool_call_id === call.tool_call_id;
+            });
+            if (result) {
+                html += '<pre style="white-space:pre-wrap;word-break:break-word;">' +
+                        escapeHtml(result.result_json || '') + '</pre>';
+            }
+            html += '</div>';
+        });
+        html += '</details>';
+    }
+
+    if (sessionData && sessionData.model_calls && sessionData.model_calls.length) {
+        html += '<details class="card"><summary><strong>模型调用审计（' +
+                sessionData.model_calls.length + ' 次）</strong></summary>';
+        sessionData.model_calls.forEach(function(call) {
+            html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;">' +
+                    escapeHtml(call.provider || '') + ' / ' + escapeHtml(call.model || '') +
+                    ' | ' + escapeHtml(call.status || '') +
+                    ' | ' + escapeHtml(call.latency_ms || '') + 'ms' +
+                    ' | tokens: ' + escapeHtml(call.input_tokens || 0) + '/' +
+                    escapeHtml(call.output_tokens || 0) + '</div>';
+        });
+        html += '</details>';
     }
 
     if (manualActions && manualActions.length) {
@@ -173,38 +243,34 @@ function renderResult(data, manualActions) {
     document.getElementById('resultArea').dataset.diagnosisId = data.diagnosis_id;
 }
 
-function openConfirmForm(diagnosisId, idx) {
-    const el = document.getElementById('confirmForm_' + diagnosisId + '_' + idx);
+function openChangeForm(diagnosisId, idx) {
+    const el = document.getElementById('changeForm_' + diagnosisId + '_' + idx);
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
-async function confirmAction(diagnosisId, idx) {
+async function createChange(diagnosisId, idx) {
     const deviceName = document.getElementById('deviceName_' + idx).value.trim();
-    const operator = document.getElementById('operator_' + idx).value.trim();
-    const actionDesc = document.getElementById('actionDesc_' + idx).value.trim();
+    const operator = document.getElementById('changeOperator_' + idx).value.trim();
+    const changeType = document.getElementById('changeType_' + idx).value;
+    const changeTitle = document.getElementById('changeTitle_' + idx).value.trim();
+    const changeDescription = document.getElementById('changeDescription_' + idx).value.trim();
     if (!deviceName || !operator) { alert('请填写设备名称和操作人'); return; }
-    const resp = await fetch('/api/manual/confirm', {
+    const resp = await fetch('/api/changes', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({diagnosis_id: diagnosisId, device_name: deviceName, operator: operator, action_desc: actionDesc})
+        body: JSON.stringify({
+            diagnosis_id: diagnosisId,
+            device_name: deviceName,
+            change_type: changeType,
+            title: changeTitle || changeDescription,
+            description: changeDescription,
+            risk_level: 'medium',
+            operator: operator
+        })
     });
     const data = await resp.json();
-    alert('已记录人工确认，备份状态: ' + (data.status || JSON.stringify(data)));
-    loadDiagnosis(diagnosisId);
-}
-
-async function rejectAction(diagnosisId, idx) {
-    const operator = document.getElementById('operator_' + idx).value.trim() || '未填写';
-    const reason = prompt('请输入驳回原因：');
-    if (reason === null) return;
-    const resp = await fetch('/api/manual/reject', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({diagnosis_id: diagnosisId, operator: operator, reason: reason})
-    });
-    await resp.json();
-    alert('已驳回该建议');
-    loadDiagnosis(diagnosisId);
+    if (!resp.ok) { alert(data.error || '创建变更失败'); return; }
+    location.href = '/changes/' + data.change_id;
 }
 </script>
 </body>

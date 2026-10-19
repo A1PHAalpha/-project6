@@ -231,6 +231,15 @@ def bootstrap_runtime() -> dict:
     }
 
     db.set_system_status(RUNTIME_STATUS_KEY, runtime_status)
+    db.record_health_check("database", database_status["status"], database_status)
+    kb_health = {
+        "ready": "ready",
+        "error": "error",
+        "missing": "degraded",
+        "empty": "degraded",
+    }.get(knowledge_base_status["status"], "unknown")
+    db.record_health_check("knowledge_base", kb_health, knowledge_base_status)
+    db.record_health_check("runtime", runtime_status["status"], runtime_status)
 
     if knowledge_base_status["status"] == "ready":
         logger.info(knowledge_base_status["message"])

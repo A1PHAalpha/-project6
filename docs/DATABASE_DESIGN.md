@@ -1,11 +1,14 @@
-# 一期数据库结构设计
+# 数据库结构设计（一期 + 二期）
 
-本文描述企业网络智能运维诊断系统一期已经落地的数据模型。一期的目标是先把
-**资产、采集批次、设备结果、采集项和状态事实**建立成可追溯的数据链，同时保留
-旧版诊断、人工处理和运行状态表，确保现有页面与诊断流程继续工作。
+本文描述企业网络智能运维诊断系统的完整数据模型。一期先把
+**资产、采集批次、设备结果、采集项和状态事实**建立成可追溯的数据链；二期继续增加
+**诊断会话、模型工具调用、检索审计、证据关联和人工变更事件流**，同时保留旧版
+诊断、人工处理和运行状态表，确保现有页面与迁移期流程继续工作。
 
-> 当前实现版本：`schema_migrations.version = 2`。版本 1 为
-> `phase1_asset_collection_state`，版本 2 为 `normalize_utc_timestamps`。
+> 当前实现版本：`schema_migrations.version = 4`。版本 1 为
+> `phase1_asset_collection_state`，版本 2 为 `normalize_utc_timestamps`，
+> 版本 3 为 `phase2_agent_sessions_tools_and_citations`，
+> 版本 4 为 `phase2b_human_change_and_operations`。
 
 ## 1. 设计目标
 
@@ -313,6 +316,7 @@ admin/oper 状态可以合并，而不是让后到的 SNMP 结果覆盖掉 SSH �
 `raw_output`、`parsed_json`。
 
 旧 `collection_records_legacy` 和 `devices_legacy` 不会被删除，可用于对照审计。
+二期 v4 迁移、诊断会话回填和旧人工记录回填见第 11 节。
 
 ## 7. 索引与 SQLite 约定
 
@@ -342,22 +346,434 @@ SQLite 约定：
 - 大配置后续可把 `raw_blobs.content_text` 迁到对象存储，数据库只保留哈希和引用；
 - `schema_migrations` 记录结构版本，后续迁移应按版本追加，不可直接修改旧表。
 
-## 8. 后续阶段预留
+## 8. 二期诊断会话、上下文与工具审计
 
-一期只实现采集与证据基础。后续建议增加：
+二期在采集证据之上增加“会话 -> 消息 -> 上下文 -> 模型调用 -> 检索命中 ->
+诊断结论 -> 证据引用”的完整链路。诊断不再只保存一行 `diagnosis_records`，
+而是可以通过 `session_id` 恢复用户问题、模型上下文、知识库检索快照和证据关联。
 
-- `agent_sessions`、`agent_messages`、`context_snapshots`：完整会话和模型上下文；
-- `tool_registry`、`tool_calls`、`tool_call_results`：LLM/MCP 工具调用；
-- `model_calls`、`retrieval_queries`、`retrieval_hits`：模型和知识库审计；
-- `diagnosis_conclusions`、`evidence_links`：诊断结论到状态事实的引用；
-- `change_requests`、`change_steps`、`change_approvals`、`change_events`：
-  人工变更状态机；
-- `command_executions`、`physical_actions`、`config_backups`、`rechecks`：
-  软件命令、物理操作、配置备份和复测证据；
+```mermaid
+erDiagram
+    PROMPT_VERSIONS ||--o{ AGENT_SESSIONS : "Prompt 版本"
+    AGENT_SESSIONS ||--o{ AGENT_MESSAGES : "完整消息"
+    AGENT_SESSIONS ||--o{ CONTEXT_SNAPSHOTS : "上下文快照"
+    AGENT_SESSIONS ||--o{ MODEL_CALLS : "模型调用"
+    AGENT_SESSIONS ||--o{ RETRIEVAL_QUERIES : "检索查询"
+    RETRIEVAL_QUERIES ||--o{ RETRIEVAL_HITS : "检索命中"
+    KB_CHUNKS ||--o{ RETRIEVAL_HITS : "知识片段"
+    AGENT_SESSIONS ||--o{ DIAGNOSIS_CONCLUSIONS : "诊断结论"
+    DIAGNOSIS_CONCLUSIONS ||--o{ EVIDENCE_LINKS : "证据引用"
+    EVIDENCE_LINKS }o--o| STATE_OBSERVATIONS : "设备状态事实"
+    EVIDENCE_LINKS }o--o| COLLECTION_ITEMS : "采集项"
+    EVIDENCE_LINKS }o--o| RETRIEVAL_HITS : "知识片段"
+    TOOL_REGISTRY ||--o{ TOOL_CALLS : "工具定义"
+    AGENT_MESSAGES ||--o{ TOOL_CALLS : "消息触发"
+    TOOL_CALLS ||--|| TOOL_CALL_RESULTS : "工具结果"
+    TOOL_CALL_RESULTS }o--o| COLLECTION_RUNS : "工具触发采集"
+
+    AGENT_SESSIONS {
+        text session_id PK
+        text title
+        text created_by
+        text model_id
+        text prompt_version_id FK
+        text status "active/completed/failed/archived"
+        text started_at_utc
+        text updated_at_utc
+        text ended_at_utc
+    }
+
+    AGENT_MESSAGES {
+        text message_id PK
+        text session_id FK
+        int seq_no
+        text role "user/assistant/tool/system"
+        text content_text
+        text content_json
+        text created_at_utc
+    }
+
+    CONTEXT_SNAPSHOTS {
+        text snapshot_id PK
+        text session_id FK
+        text message_id FK
+        text prompt_version_id FK
+        text rendered_messages_json
+        text rendered_prompt_redacted
+        text prompt_hash
+        int token_count
+    }
+
+    PROMPT_VERSIONS {
+        text prompt_version_id PK
+        text template_id
+        text system_prompt
+        text user_template
+        text content_hash
+        int is_active
+    }
+
+    MODEL_CALLS {
+        text call_id PK
+        text session_id FK
+        text message_id FK
+        text context_snapshot_id FK
+        text provider
+        text model
+        text request_id
+        text params_json
+        int input_tokens
+        int output_tokens
+        int latency_ms
+        text status
+        text error_code
+        text response_blob_id FK
+    }
+
+    RETRIEVAL_QUERIES {
+        text query_id PK
+        text session_id FK
+        text message_id FK
+        text query_text
+        text filters_json
+        int top_k
+        text status
+        text error_message
+    }
+
+    RETRIEVAL_HITS {
+        text hit_id PK
+        text query_id FK
+        text chunk_id FK
+        int rank_no
+        real distance
+        text doc_id
+        text title
+        text source
+        text version
+        text content
+        text content_hash
+    }
+
+    KB_CHUNKS {
+        text chunk_id PK
+        text index_name
+        text doc_id
+        text title
+        text category
+        text applicable_device
+        text version
+        text source
+        text content
+        text content_hash
+    }
+
+    TOOL_REGISTRY {
+        text tool_id PK
+        text tool_name
+        text transport "local/http/mcp"
+        text server_name
+        text input_schema_json
+        int read_only
+        int requires_approval
+        int enabled
+        text version
+    }
+
+    TOOL_CALLS {
+        text tool_call_id PK
+        text session_id FK
+        text message_id FK
+        text tool_id FK
+        text arguments_json
+        text status "requested/running/success/failed"
+        text error_code
+        text error_message
+        text started_at_utc
+        text finished_at_utc
+    }
+
+    TOOL_CALL_RESULTS {
+        text result_id PK
+        text tool_call_id FK
+        text result_kind
+        text collection_run_id FK
+        text result_json
+        text blob_id FK
+    }
+
+    DIAGNOSIS_CONCLUSIONS {
+        text conclusion_id PK
+        int diagnosis_id UK
+        text session_id FK
+        text final_message_id FK
+        text fault_phenomenon
+        text root_cause
+        text missing_information
+        text confidence
+    }
+
+    EVIDENCE_LINKS {
+        text link_id PK
+        text conclusion_id FK
+        text link_type "device_evidence/knowledge/tool_result"
+        text observation_id FK
+        text item_id FK
+        text retrieval_hit_id FK
+        text tool_call_result_id FK
+        text claim
+        text role "supporting/conflicting/context/missing"
+    }
+```
+
+二期工具注册表当前由 `network/tool_registry.json` 初始化，内置：
+
+- `query_device_state`：查询已发布采集快照中的设备状态；
+- `query_collection_history`：查询单设备采集项历史；
+- `run_readonly_collection`：对指定设备执行白名单内的只读采集。
+
+所有工具调用都会写入 `tool_calls` 和 `tool_call_results`。触发性采集通过
+`collection_runs.source_ref = tool_call_id` 与工具调用关联，因此可以从模型请求
+回到设备命令、原始输出和状态事实。
+
+`diagnosis_records` 继续保留为兼容表，并新增：
+
+`session_id`、`conclusion_id`、`retrieval_query_id`、`context_snapshot_id`、
+`model_call_id`、`kb_status`、`total_response_time_ms`。
+
+历史 `diagnosis_records` 在升级时自动回填为二期的 session/message/conclusion
+结构；旧记录不会删除。
+
+## 9. 二期人工变更、物理操作与复测
+
+人工处理不再是一条可被覆盖的 `manual_actions` 记录，而是“变更请求 + 计划步骤 +
+审批 + 不可变事件 + 实际命令 + 物理操作 + 配置备份 + 复测”的组合。
+
+```mermaid
+erDiagram
+    DIAGNOSIS_CONCLUSIONS ||--o{ CHANGE_REQUESTS : "诊断产生变更"
+    CHANGE_REQUESTS ||--o{ CHANGE_STEPS : "计划步骤"
+    CHANGE_REQUESTS ||--o{ CHANGE_APPROVALS : "审批"
+    CHANGE_REQUESTS ||--o{ CHANGE_EVENTS : "不可变事件"
+    CHANGE_STEPS ||--o{ COMMAND_EXECUTIONS : "实际命令"
+    CHANGE_STEPS ||--o{ PHYSICAL_ACTIONS : "物理操作"
+    CHANGE_REQUESTS ||--o{ CONFIG_BACKUPS : "配置备份"
+    CHANGE_REQUESTS ||--o{ RECHECKS : "复测"
+    RECHECKS }o--o| COLLECTION_RUNS : "复测采集批次"
+    CHANGE_REQUESTS ||--o{ ATTACHMENTS : "现场证据"
+
+    CHANGE_REQUESTS {
+        text change_id PK
+        text conclusion_id FK
+        int diagnosis_id FK
+        text session_id FK
+        text device_id FK
+        text device_name
+        text change_type "physical/software/mixed"
+        text title
+        text description
+        text risk_level "low/medium/high"
+        text status "draft/pending_approval/approved/executing/completed/failed/rolled_back"
+        text requested_by
+        text approved_by
+        text planned_at_utc
+        text started_at_utc
+        text finished_at_utc
+        text rollback_plan
+        int legacy_action_id UK
+    }
+
+    CHANGE_STEPS {
+        text step_id PK
+        text change_id FK
+        int seq_no
+        text step_type "physical/software/verification"
+        text source_type "llm/human"
+        text title
+        text command_text
+        text expected_result
+        int requires_approval
+        text status "pending/ready/running/success/failed/skipped"
+        text executed_by
+        text started_at_utc
+        text finished_at_utc
+        text result_summary
+    }
+
+    CHANGE_APPROVALS {
+        text approval_id PK
+        text change_id FK
+        text approver
+        text decision "approved/rejected/changes_requested"
+        text comment
+        text created_at_utc
+    }
+
+    CHANGE_EVENTS {
+        text event_id PK
+        text change_id FK
+        text event_type
+        text actor
+        text from_status
+        text to_status
+        text payload_json
+        text payload_hash
+        text created_at_utc
+    }
+
+    COMMAND_EXECUTIONS {
+        text execution_id PK
+        text step_id FK
+        text device_id FK
+        text command_text
+        text execution_mode "manual/readonly/approved_automation"
+        text executed_by
+        text started_at_utc
+        text finished_at_utc
+        int exit_code
+        text stdout_blob_id FK
+        text stderr_blob_id FK
+        text result_summary
+        text approval_id FK
+    }
+
+    PHYSICAL_ACTIONS {
+        text action_id PK
+        text step_id FK
+        text device_id FK
+        text action_type "cable/power/console/module/other"
+        text description
+        text performed_by
+        text performed_at_utc
+        text evidence_blob_id FK
+        text result
+    }
+
+    CONFIG_BACKUPS {
+        text backup_id PK
+        text change_id FK
+        text device_id FK
+        text config_snapshot_id FK
+        text blob_id FK
+        text sha256
+        text captured_at_utc
+        text backup_type "before/after/rollback"
+        int verified
+        text storage_ref
+    }
+
+    RECHECKS {
+        text recheck_id PK
+        text change_id FK
+        text collection_run_id FK
+        text source_device_id FK
+        text source_device_name
+        text target
+        text check_type "ping/interface/route/acl/application"
+        text expected_json
+        text actual_json
+        text pass_fail "pass/fail/inconclusive"
+        text evidence_observation_id FK
+        text executed_at_utc
+    }
+
+    ATTACHMENTS {
+        text attachment_id PK
+        text owner_type "change/step/physical_action/report"
+        text owner_id
+        text blob_id FK
+        text mime_type
+        text caption
+        text uploaded_by
+    }
+```
+
+### 9.1 推荐状态流转
+
+```text
+draft
+  -> pending_approval
+  -> approved
+  -> executing
+  -> completed
+
+pending_approval -> rejected
+approved/executing -> failed
+approved/executing -> rolled_back
+```
+
+规则：
+
+1. 创建变更时，`change_type`、风险级别、目标设备和关联诊断必须明确。
+2. 审批只追加 `change_approvals` 和 `change_events`，不回写历史审批。
+3. 配置备份在审批后执行；备份内容和哈希进入 `raw_blobs` 与 `config_backups`。
+4. 软件命令必须由人工执行后录入 `command_executions`；系统不自动下发变更。
+5. 物理操作进入 `physical_actions`，可把现场说明或照片哈希关联到 `attachments`。
+6. 复测必须创建真实 `collection_runs`，并从 `state_observations` 取复测证据。
+7. `change_events` 只追加，不更新或删除；`change_requests.status` 是当前状态缓存。
+
+### 9.2 物理操作与软件命令的统一性
+
+`change_steps` 用 `step_type` 区分：
+
+- `physical`：拔插线缆、断电、Console、模块操作；
+- `software`：人工执行或准备执行的命令；
+- `verification`：验证步骤，可绑定 `rechecks`。
+
+`source_type` 区分 `llm` 和 `human`。LLM 生成的是计划建议；人工修改后的实际命令
+进入 `command_executions.command_text`，两者不会混为一条文本。
+
+## 10. 运行健康、报告和审计
+
+二期增加：
+
+- `health_checks`：记录组件、状态、检查时间和详细信息；
+- `audit_log`：记录操作者、动作、目标对象和请求 ID；
+- `reports`：记录报告文件哈希、所属会话、诊断结论或变更；
+- `attachments`：保存物理操作、报告等对象的附件引用。
+
+这些表不替代 `system_status`。`system_status` 仍是当前启动快照，
+`health_checks` 才是可查询的历史检查记录。应用启动会写入 `database`、
+`knowledge_base` 和 `runtime` 三条健康检查；`GET /api/health` 返回当前快照
+和最近检查记录。
+
+## 11. 二期迁移与兼容
+
+`db.init_db()` 在版本低于 4 时执行：
+
+1. 创建二期诊断、工具、检索和人工变更表；
+2. 为旧 `diagnosis_records` 增加兼容列；
+3. 把旧诊断记录回填为 session/message/conclusion；
+4. 把旧 `manual_actions` 回填为历史 `change_requests`、步骤、备份和复测；
+5. 把旧 SSH `parsed_json` 的双重编码在采集迁移阶段修复；
+6. 写入 `schema_migrations` 版本 4。
+
+升级前自动创建 `<db>.pre-v4-<timestamp>.bak`。迁移不删除旧表：
+`devices_legacy`、`collection_records_legacy`、旧 `diagnosis_records` 和
+`manual_actions` 都保留用于对照审计。
+
+## 12. 索引与后续阶段
+
+二期新增索引重点覆盖：
+
+```text
+agent_messages(session_id, seq_no)
+context_snapshots(session_id, created_at_utc DESC)
+tool_calls(session_id, started_at_utc DESC)
+model_calls(session_id, created_at_utc DESC)
+retrieval_hits(query_id, rank_no)
+change_requests(device_id, status, updated_at_utc DESC)
+change_steps(change_id, seq_no)
+change_events(change_id, created_at_utc)
+command_executions(step_id, created_at_utc DESC)
+rechecks(change_id, executed_at_utc DESC)
+```
+
+后续仍建议增加：
+
 - `test_suites`、`test_cases`、`fault_injections`、`experiment_runs`、
-  `experiment_results`：故障注入与效果评测；
-- `kb_sources`、`kb_articles`、`kb_article_versions`、`kb_chunks`：
-  知识库版本和来源；
-- `health_checks`、`audit_log`：运行健康检查和操作审计。
-
-这些表在一期中只作为设计边界保留，尚未在代码中实现。
+  `experiment_results`：故障注入和知识库对比评测；
+- 知识文章版本、来源 URL、适用平台和嵌入模型索引版本；
+- 用户、角色、审批权限和密钥 Vault 引用；
+- 生命周期归档、原始输出保留期限和对象存储；
+- 多用户并发写时的 PostgreSQL/JSONB 迁移。

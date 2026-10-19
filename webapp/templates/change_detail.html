@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>变更详情 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
+    </nav>
+</header>
+<main>
+    {% if error %}
+    <div class="card"><p style="color:#c22;">{{ error }}</p></div>
+    {% else %}
+    {% set c = detail.change %}
+    <div class="section-title">变更 {{ c.change_id }}</div>
+    <div class="card">
+        <p><strong>{{ c.title }}</strong>
+            <span class="badge">{{ c.status }}</span>
+            <span class="badge badge-stale">{{ c.risk_level }}风险</span>
+        </p>
+        <p class="muted">
+            设备: {{ c.device_name }}{% if c.site %}（{{ c.site }}）{% endif %}
+            | 类型: {{ c.change_type }}
+            | 申请人: {{ c.requested_by }}
+            | 审批人: {{ c.approved_by or '未审批' }}
+        </p>
+        <p>创建: {{ c.created_at_utc }} | 更新: {{ c.updated_at_utc }}
+           {% if c.started_at_utc %} | 开始: {{ c.started_at_utc }}{% endif %}
+           {% if c.finished_at_utc %} | 结束: {{ c.finished_at_utc }}{% endif %}
+        </p>
+        <p><strong>变更说明：</strong>{{ c.description or '无' }}</p>
+        <p><strong>回滚方案：</strong>{{ c.rollback_plan or '未填写' }}</p>
+        <div class="flex-row">
+            <label>操作人：<input id="operatorName" type="text" value="{{ c.requested_by }}" style="width:160px;"></label>
+            <button class="btn" onclick="startChange()">开始执行</button>
+            <button class="btn" onclick="backupChange()">备份当前配置</button>
+        </div>
+        <p class="muted">执行软件命令或物理操作前，必须先完成一次校验成功的配置备份。</p>
+    </div>
+
+    <div class="section-title">审批</div>
+    <div class="card">
+        <div class="flex-row">
+            <input id="approver" type="text" placeholder="审批人" style="width:160px;">
+            <select id="decision">
+                <option value="approved">批准</option>
+                <option value="rejected">驳回</option>
+                <option value="changes_requested">要求修改</option>
+            </select>
+            <input id="approvalComment" type="text" placeholder="审批意见" style="width:260px;">
+            <button class="btn" onclick="approveChange()">提交审批</button>
+        </div>
+        {% if detail.approvals %}
+        <ul>
+        {% for a in detail.approvals %}
+            <li>[{{ a.created_at_utc }}] {{ a.approver }}：{{ a.decision }}
+                {{ a.comment or '' }}</li>
+        {% endfor %}
+        </ul>
+        {% else %}<p class="muted">尚无审批记录。</p>{% endif %}
+    </div>
+
+    <div class="section-title">执行步骤</div>
+    <div class="card">
+        {% if not detail.steps %}
+        <p class="muted">尚未添加步骤。</p>
+        {% endif %}
+        {% for s in detail.steps %}
+        <div style="margin-bottom:14px;border-bottom:1px solid #ddd;padding-bottom:10px;">
+            <p><strong>#{{ s.seq_no }} {{ s.title }}</strong>
+                <span class="badge">{{ s.step_type }}</span>
+                <span class="badge">{{ s.source_type }}</span>
+                <span class="badge">{{ s.status }}</span>
+            </p>
+            {% if s.command_text %}<pre style="white-space:pre-wrap;">{{ s.command_text }}</pre>{% endif %}
+            {% if s.expected_result %}<p class="muted">预期: {{ s.expected_result }}</p>{% endif %}
+            {% if s.result_summary %}<p>结果: {{ s.result_summary }}</p>{% endif %}
+            {% if s.step_type == 'physical' %}
+            <div class="flex-row">
+                <select id="actionType_{{ s.step_id }}">
+                    <option value="cable">线缆</option>
+                    <option value="power">电源/开关机</option>
+                    <option value="console">Console</option>
+                    <option value="module">模块</option>
+                    <option value="other">其他</option>
+                </select>
+                <input id="physicalDesc_{{ s.step_id }}" type="text" value="{{ s.title }}" style="width:260px;">
+                <input id="physicalResult_{{ s.step_id }}" type="text" placeholder="现场结果" style="width:200px;">
+                <input id="physicalEvidence_{{ s.step_id }}" type="text" placeholder="现场证据说明/照片路径" style="width:260px;">
+                <button class="btn" onclick="recordPhysical('{{ s.step_id }}')">记录物理操作</button>
+            </div>
+            {% else %}
+            <div style="display:grid;gap:6px;">
+                <input id="cmd_{{ s.step_id }}" type="text" value="{{ s.command_text or '' }}" placeholder="实际执行的命令">
+                <textarea id="out_{{ s.step_id }}" rows="3" placeholder="实际输出"></textarea>
+                <div class="flex-row">
+                    <input id="exit_{{ s.step_id }}" type="number" value="0" style="width:90px;" title="退出码">
+                    <input id="summary_{{ s.step_id }}" type="text" placeholder="结果摘要" style="width:320px;">
+                    <button class="btn" onclick="recordCommand('{{ s.step_id }}')">记录实际执行</button>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="section-title">添加步骤</div>
+    <div class="card">
+        <div class="flex-row">
+            <select id="stepType">
+                <option value="software">软件命令</option>
+                <option value="physical">物理操作</option>
+                <option value="verification">验证</option>
+            </select>
+            <select id="stepSource">
+                <option value="human">人工输入</option>
+                <option value="llm">LLM 建议</option>
+            </select>
+            <input id="stepTitle" type="text" placeholder="步骤标题" style="width:220px;">
+            <input id="stepCommand" type="text" placeholder="计划命令/操作说明" style="width:360px;">
+            <input id="stepExpected" type="text" placeholder="预期结果" style="width:220px;">
+            <label><input id="stepApproval" type="checkbox"> 需单独审批</label>
+            <button class="btn" onclick="addStep()">添加</button>
+        </div>
+    </div>
+
+    <div class="section-title">变更后复测</div>
+    <div class="card">
+        <div class="flex-row">
+            <input id="recheckSource" type="text" placeholder="源设备，如 BR-A-PC" style="width:220px;">
+            <input id="recheckTarget" type="text" placeholder="目标 IP，如 10.10.10.100" style="width:220px;">
+            <label><input id="expectedReachable" type="checkbox" checked> 预期可达</label>
+            <button class="btn" onclick="runRecheck()">执行真实复测</button>
+        </div>
+        {% if detail.rechecks %}
+        <ul>
+        {% for r in detail.rechecks %}
+            <li>[{{ r.executed_at_utc }}] {{ r.pass_fail }} | {{ r.source_device_name or '未记录来源' }}
+                → {{ r.target }} | 批次: {{ r.collection_run_id or '无' }}</li>
+        {% endfor %}
+        </ul>
+        {% else %}<p class="muted">尚无复测记录。</p>{% endif %}
+    </div>
+
+    <div class="section-title">完成变更</div>
+    <div class="card">
+        <div class="flex-row">
+            <select id="outcome">
+                <option value="completed">完成</option>
+                <option value="failed">失败</option>
+                <option value="rolled_back">已回滚</option>
+            </select>
+            <button class="btn" onclick="completeChange()">记录最终状态</button>
+        </div>
+    </div>
+
+    <div class="section-title">配置备份</div>
+    <div class="card">
+        {% if detail.config_backups %}
+        <ul>
+        {% for b in detail.config_backups %}
+            <li>{{ b.captured_at_utc }} | {{ b.backup_type }} | {{ b.storage_ref or '无路径' }}
+                | sha256: {{ b.sha256 or '未记录' }}</li>
+        {% endfor %}
+        </ul>
+        {% else %}<p class="muted">尚未记录配置备份。</p>{% endif %}
+    </div>
+
+    <div class="section-title">不可变事件流</div>
+    <div class="card">
+        {% for e in detail.events %}
+        <div style="margin-bottom:8px;">
+            <strong>{{ e.created_at_utc }}</strong> {{ e.event_type }} | {{ e.actor }}
+            {% if e.from_status or e.to_status %}
+            | {{ e.from_status or '无' }} → {{ e.to_status or '无' }}
+            {% endif %}
+            {% if e.payload_json %}<pre style="white-space:pre-wrap;">{{ e.payload_json }}</pre>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</main>
+
+<script>
+const CHANGE_ID = {{ (detail.change.change_id if detail else '')|tojson }};
+function operatorName() {
+    return document.getElementById('operatorName').value.trim() || 'web';
+}
+async function postJson(url, body) {
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    return data;
+}
+async function run(action) {
+    try { await action(); location.reload(); }
+    catch (e) { alert(e.message || String(e)); }
+}
+function changeId() { return CHANGE_ID; }
+function startChange() {
+    run(() => postJson('/api/changes/' + changeId() + '/start', {operator: operatorName()}));
+}
+function backupChange() {
+    run(() => postJson('/api/changes/' + changeId() + '/backup', {operator: operatorName()}));
+}
+function approveChange() {
+    run(() => postJson('/api/changes/' + changeId() + '/approve', {
+        approver: document.getElementById('approver').value.trim(),
+        decision: document.getElementById('decision').value,
+        comment: document.getElementById('approvalComment').value.trim()
+    }));
+}
+function addStep() {
+    run(() => postJson('/api/changes/' + changeId() + '/steps', {
+        step_type: document.getElementById('stepType').value,
+        source_type: document.getElementById('stepSource').value,
+        title: document.getElementById('stepTitle').value.trim(),
+        command_text: document.getElementById('stepCommand').value.trim() || null,
+        expected_result: document.getElementById('stepExpected').value.trim() || null,
+        requires_approval: document.getElementById('stepApproval').checked,
+        operator: operatorName()
+    }));
+}
+function recordCommand(stepId) {
+    run(() => postJson('/api/changes/' + changeId() + '/steps/' + stepId + '/execute', {
+        command_text: document.getElementById('cmd_' + stepId).value,
+        output: document.getElementById('out_' + stepId).value,
+        exit_code: parseInt(document.getElementById('exit_' + stepId).value || '0', 10),
+        result_summary: document.getElementById('summary_' + stepId).value,
+        operator: operatorName()
+    }));
+}
+function recordPhysical(stepId) {
+    run(() => postJson('/api/changes/' + changeId() + '/steps/' + stepId + '/physical', {
+        action_type: document.getElementById('actionType_' + stepId).value,
+        description: document.getElementById('physicalDesc_' + stepId).value,
+        result: document.getElementById('physicalResult_' + stepId).value,
+        evidence_text: document.getElementById('physicalEvidence_' + stepId).value,
+        operator: operatorName()
+    }));
+}
+function runRecheck() {
+    run(() => postJson('/api/changes/' + changeId() + '/recheck', {
+        source_device_name: document.getElementById('recheckSource').value.trim(),
+        target_ip: document.getElementById('recheckTarget').value.trim(),
+        expected_reachable: document.getElementById('expectedReachable').checked,
+        operator: operatorName()
+    }));
+}
+function completeChange() {
+    run(() => postJson('/api/changes/' + changeId() + '/complete', {
+        operator: operatorName(),
+        outcome: document.getElementById('outcome').value
+    }));
+}
+</script>
+</body>
+</html>

@@ -26,6 +26,11 @@ def test_bootstrap_seeds_database_and_records_missing_kb(tmp_path, monkeypatch):
     assert runtime["startup_collection"]["status"] == "disabled"
     assert db.get_system_status("knowledge_base")["status"] == "missing"
     assert db.get_system_status("runtime")["status"] == "degraded"
+    assert {check["component"] for check in db.list_health_checks()} >= {
+        "database",
+        "knowledge_base",
+        "runtime",
+    }
 
 
 def test_inspect_knowledge_base_reports_empty_collection(tmp_path):

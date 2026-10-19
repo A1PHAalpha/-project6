@@ -108,6 +108,7 @@ def run_collection(
     trigger_type: str = "manual",
     requested_by: str = "cli",
     source_ref: str | None = None,
+    result_type: str | None = None,
 ) -> dict:
     """执行一次采集，返回机器可读摘要。"""
     db.init_db()
@@ -140,6 +141,9 @@ def run_collection(
 
     hq_server = next((device for device in devices if device["device_name"] == "HQ-SRV"), None)
     scope_type = "batch" if len(selected) > 1 else "device"
+    capture_result_type = result_type or (
+        "single" if trigger_type in ("llm_tool", "mcp") else "full"
+    )
     run_id = db.start_collection_run(
         trigger_type=trigger_type,
         scope_type=scope_type,
@@ -147,6 +151,7 @@ def run_collection(
         source_ref=source_ref,
         inventory_version_id=inventory["inventory_version_id"],
         scope={"devices": [device["device_name"] for device in selected]},
+        tool_version="phase2",
     )
     logger.info("采集任务已创建: %s", run_id)
 
@@ -165,7 +170,7 @@ def run_collection(
             result_id = db.create_device_capture_result(
                 run_id,
                 device["device_id"],
-                result_type="full",
+                result_type=capture_result_type,
                 started_at=_utc_now(),
             )
             results = []
@@ -222,6 +227,7 @@ def run_collection(
             "mode": mode,
             "run_id": run_id,
             "trigger_type": trigger_type,
+            "result_type": capture_result_type,
             "device_count": len(selected),
             "requested_devices": None if not devices_arg else [
                 name.strip() for name in devices_arg.split(",") if name.strip()

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from urllib.parse import urlparse
 
 from openai import OpenAI
 
@@ -31,6 +32,12 @@ def get_client() -> OpenAI:
 
 def get_model_id() -> str:
     return os.getenv("LLM_MODEL", "qwen-plus")
+
+
+def get_provider_name() -> str:
+    base_url = os.getenv("LLM_BASE_URL") or ""
+    hostname = urlparse(base_url).hostname
+    return hostname or "openai_compatible"
 
 
 def chat_completion(messages: list, temperature: float = 0.2, max_tokens: int = 1500,
@@ -61,7 +68,21 @@ def chat_completion(messages: list, temperature: float = 0.2, max_tokens: int = 
     elapsed_ms = int((time.time() - start) * 1000)
 
     content = resp.choices[0].message.content
-    return content, elapsed_ms, {"model": model, **params}
+    usage = getattr(resp, "usage", None)
+    usage_data = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    } if usage else {}
+    params_used = {
+        "model": model,
+        **params,
+        "_provider": get_provider_name(),
+        "_request_id": getattr(resp, "id", None),
+        "_usage": usage_data,
+        "_status": "success",
+    }
+    return content, elapsed_ms, params_used
 
 
 def safe_parse_json(text: str) -> dict:

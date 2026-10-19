@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>人工变更 - 企业网络智能运维诊断系统</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>企业网络智能运维诊断系统</h1>
+    <nav>
+        <a href="/">设备总览</a>
+        <a href="/diagnose">故障诊断</a>
+        <a href="/changes">人工变更</a>
+    </nav>
+</header>
+<main>
+    <div class="section-title">人工变更记录（共 {{ changes|length }} 条）</div>
+    <div class="card">
+        {% if not changes %}
+        <p class="muted">暂无人工变更记录。请先在诊断结果中创建变更请求。</p>
+        {% endif %}
+        {% for c in changes %}
+        <div class="history-item" onclick="location.href='/changes/{{ c.change_id }}'">
+            <strong>{{ c.title }}</strong>
+            <span class="badge">{{ c.status }}</span>
+            <span class="muted">
+                | 设备: {{ c.device_name }} | 类型: {{ c.change_type }}
+                | 风险: {{ c.risk_level }} | 更新: {{ c.updated_at_utc }}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</main>
+</body>
+</html>
