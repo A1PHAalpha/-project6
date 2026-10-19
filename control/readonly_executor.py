@@ -10,6 +10,7 @@ from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutExc
 
 from collector import db
 from collector.whitelist_commands import is_readonly_command
+from rag_engine.sanitize import sanitize_text
 
 logger = logging.getLogger("readonly_executor")
 
@@ -39,17 +40,42 @@ def execute_readonly(device: dict, command: str, username: str, password: str, t
     try:
         conn = ConnectHandler(**conn_params)
     except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
-        reason = f"连接失败: {type(e).__name__}: {e}"
-        db.insert_collection_record(device["device_name"], status="failed", command=command, fail_reason=reason)
+        reason = sanitize_text(f"连接失败: {type(e).__name__}: {e}")
+        db.insert_collection_record(
+            device["device_name"],
+            status="failed",
+            command=command,
+            fail_reason=reason,
+            source="ssh",
+            trigger_type="manual",
+            result_type="single",
+        )
         return {"status": "failed", "reason": reason}
 
     try:
         raw = conn.send_command(command, read_timeout=timeout)
-        db.insert_collection_record(device["device_name"], status="success", command=command, raw_output=raw)
-        return {"status": "success", "raw_output": raw}
+        safe_raw = sanitize_text(raw)
+        db.insert_collection_record(
+            device["device_name"],
+            status="success",
+            command=command,
+            raw_output=safe_raw,
+            source="ssh",
+            trigger_type="manual",
+            result_type="single",
+        )
+        return {"status": "success", "raw_output": safe_raw}
     except Exception as e:
-        reason = f"命令执行失败: {type(e).__name__}: {e}"
-        db.insert_collection_record(device["device_name"], status="failed", command=command, fail_reason=reason)
+        reason = sanitize_text(f"命令执行失败: {type(e).__name__}: {e}")
+        db.insert_collection_record(
+            device["device_name"],
+            status="failed",
+            command=command,
+            fail_reason=reason,
+            source="ssh",
+            trigger_type="manual",
+            result_type="single",
+        )
         return {"status": "failed", "reason": reason}
     finally:
         conn.disconnect()

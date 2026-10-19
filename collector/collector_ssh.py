@@ -1,28 +1,38 @@
-"""
-SSH 采集模块：通过 netmiko 对路由器/交换机执行白名单只读命令。
-采集接口状态/VLAN/路由表/关键配置，脱敏后写入 SQLite。
+"""SSH 采集模块。
 
-安全要点：
-- 口令由 netmiko 通过 SSH 协议传递，不再出现在命令行/``ps`` 输出中。
-- 写库前调用 sanitize_text()，库内不保留明文凭据。
+采集器只返回结果，不直接写数据库；由 ``run_collect`` 统一创建采集批次、
+设备结果和状态事实。这样批量采集与 LLM 单设备工具调用可以复用同一套落库逻辑。
 """
-import json
+from __future__ import annotations
+
 import logging
 import os
+from datetime import datetime, timezone
 
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoTimeoutException
 
 from rag_engine.sanitize import sanitize_text
 
-from . import db
 from .whitelist_commands import READONLY_COMMANDS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collector_ssh")
 
-# 老 Cisco 设备兼容开关，默认关闭。开启后强制使用 ssh-rsa 主机密钥算法。
 SSH_LEGACY_ALGOS = os.getenv("SSH_LEGACY_ALGOS", "false").lower() in ("1", "true", "yes")
+CAPTURE_TYPES = {
+    "interface_status": "interface",
+    "vlan_brief": "vlan",
+    "route_table": "route",
+    "running_config": "config",
+    "cdp_neighbors": "neighbor",
+    "access_list": "acl",
+    "arp_table": "arp",
+}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _connect_params(host: str, username: str, password: str, device_type: str, timeout: int) -> dict:
@@ -34,117 +44,133 @@ def _connect_params(host: str, username: str, password: str, device_type: str, t
         "timeout": timeout,
     }
     if SSH_LEGACY_ALGOS:
-        # paramiko 默认优先 rsa-sha2-*；老设备只支持 ssh-rsa，需要禁用新算法强制回退。
         params["disabled_algorithms"] = {"pubkeys": ["rsa-sha2-256", "rsa-sha2-512"]}
     return params
 
 
-def execute_ssh_command(host: str, username: str, password: str, command: str,
-                        timeout: int = 15, device_type: str = "cisco_ios") -> str:
-    """
-    通过 netmiko 建立 SSH 连接并执行单条命令，返回命令输出。
-    连接超时统一抛出 TimeoutError，便于调用方区分。
-    """
+def execute_ssh_command(
+    host: str,
+    username: str,
+    password: str,
+    command: str,
+    timeout: int = 15,
+    device_type: str = "cisco_ios",
+) -> str:
+    """执行单条 SSH 命令，供独立只读检查复用。"""
     try:
         conn = ConnectHandler(**_connect_params(host, username, password, device_type, timeout))
-    except NetmikoTimeoutException as e:
-        raise TimeoutError(f"Command timeout after {timeout}s") from e
-
+    except NetmikoTimeoutException as exc:
+        raise TimeoutError(f"Command timeout after {timeout}s") from exc
     try:
         return conn.send_command(command, read_timeout=timeout)
     finally:
         conn.disconnect()
 
 
-def collect_device(device: dict, username: str, password: str, timeout: int = 15):
-    """
-    对单台设备执行一轮采集。
+def collect_device(device: dict, username: str, password: str, timeout: int = 15) -> list[dict]:
+    """对单台设备执行一轮只读 SSH 采集。
+
+    同一台设备只建立一个 SSH 会话，避免每条命令重新登录。命令失败会作为
+    ``collection_item`` 返回，由上层决定设备级 reachability 和 overall_status。
     """
     device_name = device["device_name"]
     device_type = device["device_type"]
     commands = READONLY_COMMANDS.get(device_type, {})
-    results = []
-
     if device_type == "linux":
-        logger.info("[%s] 跳过Linux设备（暂无SSH采集）", device_name)
-        return results
+        logger.info("[%s] Linux 设备不走网络设备 SSH 命令集", device_name)
+        return []
+    if not commands:
+        return [
+            {
+                "item": "unsupported_device_type",
+                "command": None,
+                "status": "failed",
+                "source": "ssh",
+                "capture_type": "command",
+                "started_at": _utc_now(),
+                "finished_at": _utc_now(),
+                "error_code": "unsupported_device_type",
+                "fail_reason": f"不支持的设备类型: {device_type}",
+            }
+        ]
 
     host = device["mgmt_ip"]
+    started = _utc_now()
+    try:
+        conn = ConnectHandler(
+            **_connect_params(host, username, password, device_type, timeout)
+        )
+    except Exception as exc:
+        reason = sanitize_text(f"{type(exc).__name__}: {exc}")
+        logger.warning("[%s] SSH 连接失败: %s", device_name, reason)
+        return [
+            {
+                "item": "ssh_connection",
+                "command": None,
+                "status": "failed",
+                "source": "ssh",
+                "capture_type": "command",
+                "started_at": started,
+                "finished_at": _utc_now(),
+                "error_code": "ssh_connection_failed",
+                "fail_reason": reason,
+            }
+        ]
 
-    for item, cmd in commands.items():
-        if cmd is None:
-            continue
-
-        logger.info("[%s] 执行命令: %s", device_name, cmd)
-
-        try:
-            output = execute_ssh_command(host, username, password, cmd, timeout, device_type=device_type)
-
-            # 入库前脱敏：库内不保留明文凭据
-            safe_output = sanitize_text(output)
-            parsed = json.dumps({"raw": safe_output}, ensure_ascii=False)
-
-            db.insert_collection_record(
-                device_name,
-                status="success",
-                command=cmd,
-                raw_output=safe_output,
-                parsed=parsed,
-            )
-            results.append({
-                "item": item,
-                "command": cmd,
-                "status": "success",
-                "output_lines": len(output.split('\n'))
-            })
-            logger.info("[%s] %s 成功", device_name, item)
-
-        except TimeoutError as e:
-            reason = str(e)
-            logger.warning("[%s] %s: %s", device_name, item, reason)
-            db.insert_collection_record(
-                device_name,
-                status="failed",
-                command=cmd,
-                fail_reason=reason,
-            )
-            results.append({"item": item, "command": cmd, "status": "failed", "reason": reason})
-
-        except Exception as e:
-            reason = f"{type(e).__name__}: {e}"
-            logger.error("[%s] %s: %s", device_name, item, reason)
-            db.insert_collection_record(
-                device_name,
-                status="failed",
-                command=cmd,
-                fail_reason=reason,
-            )
-            results.append({"item": item, "command": cmd, "status": "failed", "reason": reason})
-
-    if results:
-        success_count = sum(1 for r in results if r["status"] == "success")
-        logger.info("[%s] 采集完成: %d/%d 成功", device_name, success_count, len(results))
-
+    results = []
+    try:
+        for item, command in commands.items():
+            if command is None:
+                continue
+            command_started = _utc_now()
+            logger.info("[%s] 执行命令: %s", device_name, command)
+            try:
+                output = conn.send_command(command, read_timeout=timeout)
+                safe_output = sanitize_text(output)
+                results.append(
+                    {
+                        "item": item,
+                        "command": command,
+                        "status": "success",
+                        "source": "ssh",
+                        "capture_type": CAPTURE_TYPES.get(item, "command"),
+                        "started_at": command_started,
+                        "finished_at": _utc_now(),
+                        "raw_output": safe_output,
+                        "parsed": {"line_count": len(safe_output.splitlines())},
+                    }
+                )
+            except Exception as exc:
+                reason = sanitize_text(f"{type(exc).__name__}: {exc}")
+                logger.warning("[%s] %s 失败: %s", device_name, item, reason)
+                results.append(
+                    {
+                        "item": item,
+                        "command": command,
+                        "status": "failed",
+                        "source": "ssh",
+                        "capture_type": CAPTURE_TYPES.get(item, "command"),
+                        "started_at": command_started,
+                        "finished_at": _utc_now(),
+                        "error_code": "ssh_command_failed",
+                        "fail_reason": reason,
+                    }
+                )
+    finally:
+        conn.disconnect()
+    logger.info(
+        "[%s] SSH 采集完成: %d/%d 成功",
+        device_name,
+        sum(1 for result in results if result["status"] == "success"),
+        len(results),
+    )
     return results
 
 
-def collect_all(devices: list, username: str, password: str):
-    """
-    采集所有设备，返回每台设备的采集结果摘要列表。
-    """
-    logger.info("开始全局采集，共 %d 台设备", len(devices))
-
+def collect_all(devices: list, username: str, password: str) -> list[dict]:
+    """采集多台设备，返回结果摘要，不写数据库。"""
     summary = []
     for device in devices:
-        device_name = device["device_name"]
-        logger.info("开始采集设备: %s (%s)", device_name, device["mgmt_ip"])
-
         results = collect_device(device, username, password)
-
-        if not results:
-            logger.warning("[%s] 该设备无采集结果", device_name)
-
-        summary.append({"device_name": device_name, "results": results})
-
-    logger.info("全局采集完成")
+        summary.append({"device_name": device["device_name"], "results": results})
     return summary

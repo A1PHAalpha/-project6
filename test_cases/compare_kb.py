@@ -90,11 +90,14 @@ def _run_one(scenario: dict) -> dict:
 
 
 def run_all() -> list:
+    from collector import db
     from test_cases.scenarios import SCENARIOS
 
     _init_db_and_devices()
     results = []
     for scenario in SCENARIOS:
+        # 每个案例必须从独立证据集开始，避免前一案例的采集记录污染当前状态。
+        db.reset_collection_data()
         print(f"[运行场景] {scenario['id']} ({scenario['category']}) ...")
         results.append(_run_one(scenario))
     return results

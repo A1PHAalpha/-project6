@@ -84,7 +84,7 @@ def test_startup_collection_records_success(tmp_path, monkeypatch):
     monkeypatch.setattr(
         app_bootstrap,
         "run_collection",
-        lambda _devices=None: {
+        lambda _devices=None, **_kwargs: {
             "mode": "full",
             "device_count": 9,
             "requested_devices": None,
@@ -109,7 +109,7 @@ def test_startup_collection_records_missing_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(
         app_bootstrap,
         "run_collection",
-        lambda _devices=None: (_ for _ in ()).throw(
+        lambda _devices=None, **_kwargs: (_ for _ in ()).throw(
             app_bootstrap.CollectionConfigurationError("缺少设备凭据")
         ),
     )

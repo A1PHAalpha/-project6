@@ -59,9 +59,17 @@ def recheck_connectivity(action_id: int, source_device_name: str, target_ip: str
 
     db.insert_collection_record(
         source_device_name, status="success" if result["success"] else "failed",
-        command=f"ping {target_ip} (复测)", raw_output=result["raw_output"],
-        parsed={"recheck_for_action_id": action_id, "reachable": result["success"]},
+        command=f"ping {target_ip}", raw_output=result["raw_output"],
+        parsed={
+            "recheck_for_action_id": action_id,
+            "target_ip": target_ip,
+            "reachable": result["success"],
+            "execution_location": "collector_host",
+        },
         fail_reason=None if result["success"] else f"复测后目标 {target_ip} 仍不可达",
+        source="ping",
+        trigger_type="recheck",
+        result_type="recheck",
     )
 
     return {"action_id": action_id, "recheck_text": recheck_text, "success": result["success"]}

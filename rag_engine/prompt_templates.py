@@ -35,7 +35,7 @@ DIAGNOSIS_SYSTEM_PROMPT = """你是企业网络运维故障诊断助手。你的
 DIAGNOSIS_USER_TEMPLATE = """# 用户问题
 {question}
 
-# 当前设备证据（来自最近一次采集，包含设备名和采集时间）
+# 当前设备证据（来自已发布的采集快照，包含设备名、采集时间和观测ID）
 {evidence_text}
 
 # 检索到的相关运维知识库资料

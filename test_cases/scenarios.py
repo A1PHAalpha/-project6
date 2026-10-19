@@ -284,15 +284,23 @@ def seed_scenario(scenario: dict):
     """
     from collector import db
 
-    for rec in scenario["seed_records"]:
-        db.insert_collection_record(
-            rec["device_name"],
-            status=rec["status"],
-            command=rec.get("command"),
-            raw_output=rec.get("raw_output"),
-            parsed=rec.get("parsed"),
-            fail_reason=rec.get("fail_reason"),
-        )
+    records = [
+        {
+            "device_name": rec["device_name"],
+            "status": rec["status"],
+            "command": rec.get("command"),
+            "raw_output": rec.get("raw_output"),
+            "parsed": rec.get("parsed"),
+            "fail_reason": rec.get("fail_reason"),
+        }
+        for rec in scenario["seed_records"]
+    ]
+    db.insert_collection_batch(
+        records,
+        trigger_type="synthetic",
+        result_type="full",
+        requested_by="test_scenario",
+    )
 
 
 def get_scenario(scenario_id: str) -> dict:

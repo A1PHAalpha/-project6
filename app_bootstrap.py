@@ -36,26 +36,28 @@ _collection_thread_lock = threading.Lock()
 
 
 def ensure_database() -> dict:
-    """Initialize SQLite and seed the device inventory when needed."""
+    """Initialize SQLite and synchronize the device inventory into a new version."""
     db.init_db()
     devices = db.list_devices()
     inventory_loaded = False
     warning = None
 
-    if not devices and INVENTORY_PATH.exists():
+    if INVENTORY_PATH.exists():
         try:
-            devices = db.load_inventory(str(INVENTORY_PATH))
+            inventory = db.load_inventory_with_version(str(INVENTORY_PATH))
+            devices = db.list_devices()
             inventory_loaded = True
         except Exception as exc:
             logger.exception("设备台账加载失败")
             warning = f"设备台账加载失败: {type(exc).__name__}: {exc}"
-    elif not INVENTORY_PATH.exists():
+    else:
         warning = f"设备台账不存在: {INVENTORY_PATH}"
 
     status = {
         "status": "ready" if not warning else "degraded",
         "device_count": len(devices),
         "inventory_loaded": inventory_loaded,
+        "inventory_version_id": inventory.get("inventory_version_id") if inventory_loaded else None,
         "db_path": db.DB_PATH,
         "warning": warning,
     }
@@ -118,7 +120,11 @@ def run_startup_collection_once(devices_arg: str | None = None) -> dict:
     db.set_system_status(COLLECTION_STATUS_KEY, status)
 
     try:
-        result = run_collection(devices_arg)
+        result = run_collection(
+            devices_arg,
+            trigger_type="startup",
+            requested_by="application_startup",
+        )
     except CollectionConfigurationError as exc:
         status.update({
             "status": "skipped",
@@ -133,10 +139,15 @@ def run_startup_collection_once(devices_arg: str | None = None) -> dict:
             "message": f"启动采集失败: {type(exc).__name__}: {exc}",
         })
     else:
-        evidence_success = result["ssh_commands_success"] + result["snmp_devices_success"]
+        evidence_success = (
+            result["ssh_commands_success"]
+            + result["snmp_devices_success"]
+            + result.get("connectivity_successes", 0)
+        )
         evidence_failed = (
             result["ssh_commands_failed"]
             + result["snmp_devices_failed"]
+            + result.get("connectivity_failures", 0)
             + len(result["missing_devices"])
         )
         if evidence_success == 0:

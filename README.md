@@ -6,7 +6,11 @@
 
 > **维护基线（2026-10-20）**：Python 3.12、FastAPI、SQLite、Chroma 1.5.9、
 > FastEmbed 0.9.0、`BAAI/bge-small-zh-v1.5`。快速测试基线为
-> `41 passed, 1 deselected`，Ruff 与 compileall 通过。
+> `50 passed, 1 deselected`，Ruff 与 compileall 通过。
+>
+> **一期数据改造（2026-10-20）**：数据库已升级为采集批次、设备结果、采集项和
+> 状态事实模型；旧库自动备份迁移，`collection_records` 保留兼容视图。详见
+> [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。
 
 ---
 
@@ -17,7 +21,7 @@
 - [3. 系统架构全景](#3-系统架构全景)
 - [4. 启动、诊断与人工变更链路](#4-启动诊断与人工变更链路)
 - [5. 模块职责与依赖边界](#5-模块职责与依赖边界)
-- [6. SQLite 数据模型](#6-sqlite-数据模型)
+- [6. SQLite 数据模型（一期）](#6-sqlite-数据模型一期)
 - [7. 知识库与本地 Embedding](#7-知识库与本地-embedding)
 - [8. API 与页面](#8-api-与页面)
 - [9. 配置项](#9-配置项)
@@ -122,13 +126,24 @@ python -m webapp.main
 启动时自动执行：
 
 1. 校验 `APP_API_TOKEN`；
-2. 初始化 SQLite 并补齐表结构；
-3. 数据库为空时加载 `network/device_inventory.json`；
+2. 初始化 SQLite，应用 `schema_migrations` 中的一期结构迁移；
+3. 读取 `network/device_inventory.json`，生成新的 `inventory_version` 并同步设备台账；
 4. 检查 Chroma 集合、模型和条目数量；
-5. 在后台线程发起一次 SSH + SNMP + 连通性采集，不阻塞 Web 服务；
-6. 将数据库、知识库、采集和整体状态写入 `system_status`。
+5. 在后台线程创建一个 `collection_run`，执行 SSH + SNMP + 终端连通性采集；
+6. 写入 `device_capture_results`、`collection_items`、`state_observations`，
+   发布当前状态并生成拓扑快照；
+7. 将数据库、知识库、采集和整体状态写入 `system_status`。
 
 浏览器访问 `http://127.0.0.1:8000`，输入 `APP_API_TOKEN` 登录。
+
+从旧版五表结构升级时，建议先显式执行一次迁移并检查数量：
+
+```bash
+python -m collector.migrate
+```
+
+迁移会自动备份旧数据库，并保留 `devices_legacy` / `collection_records_legacy`。
+
 开发时也可以使用：
 
 ```bash
@@ -146,6 +161,12 @@ python -m ruff check .
 
 ```bash
 python -c "from collector import db; import json; print(json.dumps(db.list_system_status(), ensure_ascii=False, indent=2))"
+```
+
+查看当前设备状态和最新采集批次：
+
+```bash
+python -c "from collector import db; import json; print(json.dumps(db.get_current_device_status(), ensure_ascii=False, indent=2))"
 ```
 
 查看知识库检索：
@@ -205,10 +226,15 @@ graph TB
     B -. "后台线程，不阻塞" .-> C["采集编排<br/>collector/run_collect.py"]
     C --> NET["SSH / SNMP / Ping"]
     NET --> DEV["路由器、交换机、终端"]
-    C --> DB
+    C --> R1["采集批次与状态事实<br/>collection_runs / items / observations"]
+    R1 --> DB
+    R1 --> TOPO["拓扑快照<br/>topology_snapshots"]
+    TOPO --> DB
 
     W --> R["诊断核心<br/>rag_engine"]
     R --> DB
+    DB --> CS["当前状态读模型<br/>已发布设备结果"]
+    CS --> R
     R --> K["知识库检索<br/>knowledge_base"]
     K --> V
     R --> LLM["OpenAI 兼容 LLM API"]
@@ -225,8 +251,10 @@ graph TB
 |---|---|
 | 部署形态 | 单进程 FastAPI + 本地文件数据库 |
 | Web 框架 | FastAPI + Jinja2 + 原生 `fetch` |
-| 设备采集 | Netmiko SSH、PySNMP v2c、系统 `ping` |
+| 设备采集 | Netmiko SSH、PySNMP v2c；分支连通性优先在源终端 SSH 内执行 `ping` |
+| 采集状态模型 | `collection_runs → device_capture_results → collection_items → state_observations` |
 | 关系数据 | SQLite，单文件 |
+| 拓扑数据 | 由 CDP/接口状态生成 `topology_snapshots/nodes/edges` |
 | 向量数据 | Chroma PersistentClient |
 | Embedding | FastEmbed ONNX，本地 CPU |
 | LLM | OpenAI Python SDK，兼容通义千问/DeepSeek 等 |
@@ -236,6 +264,10 @@ graph TB
 
 > **重要**：当前没有跨进程任务队列、构建锁或分布式锁。不要用多个 Uvicorn worker
 > 同时运行启动采集，也不要让多个进程同时重建同一个 Chroma 集合。
+
+> 详细表结构、字段和迁移规则已拆分到
+> [docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。README 只保留运行链路和
+> 关键数据边界，避免数据库细节继续膨胀。
 
 ---
 
@@ -258,13 +290,16 @@ sequenceDiagram
     Main->>Main: 加载项目 .env，校验 APP_API_TOKEN
     Main->>Life: Uvicorn 启动 lifespan
     Life->>Boot: bootstrap_runtime()
-    Boot->>DB: init_db + 空库时加载设备台账
+    Boot->>DB: init_db / schema_migrations / 同步设备台账
     Boot->>KB: 检查集合是否存在、是否为空
     Boot->>Worker: 启动一次性后台采集
     Boot->>DB: 写入 database / knowledge_base / runtime
     Life-->>User: Web 服务 ready
     Worker->>Device: SSH + SNMP + Ping
-    Worker->>DB: 写入 collection_records 和 startup_collection
+    Worker->>DB: 创建 collection_run
+    Worker->>DB: 写入 device_capture_results / collection_items / state_observations
+    Worker->>DB: 发布当前状态 + topology_snapshots
+    Worker->>DB: 写入 startup_collection
 ```
 
 关键行为：
@@ -273,6 +308,8 @@ sequenceDiagram
 - **知识库缺失不阻止启动**：状态为 `missing/empty/error` 时，诊断仍可使用设备证据。
 - **启动采集不阻塞启动**：采集在线程中运行，结果写入 `system_status.startup_collection`。
 - **缺少设备凭据不阻止启动**：采集状态为 `skipped`，Web 仍可用。
+- **旧库自动迁移**：旧 `devices`/`collection_records` 会先备份，再迁移到一期结构；
+  `collection_records` 保留为兼容视图。
 
 ### 4.2 诊断请求链路
 
@@ -292,8 +329,8 @@ sequenceDiagram
     API->>D: diagnose(question, use_kb)
     D->>X: 识别站点和设备
     X->>DB: 查询 devices
-    D->>E: 取每设备每命令最新记录
-    E->>DB: 查询 collection_records
+    D->>E: 取已发布的当前设备快照
+    E->>DB: get_current_device_bundle / state_observations
     D->>S: 脱敏证据与问题
     D->>K: 向量检索知识库
     K-->>D: 文档、元数据、距离
@@ -305,7 +342,8 @@ sequenceDiagram
     API-->>UI: JSON 响应
 ```
 
-诊断结果包含：
+诊断证据来自最近一次已发布的 `device_capture_results`。如果设备最近一次采集不可达，
+只给出不可达事实，不会把旧接口/路由成功状态当作当前状态。诊断结果包含：
 
 - `evidence`：本次使用的证据快照；
 - `retrieved_docs`：知识库条目及距离；
@@ -330,7 +368,7 @@ flowchart LR
 
 1. 备份；
 2. 记录确认、驳回或复测状态；
-3. 将复测结果写回 `manual_actions` 和 `collection_records`。
+3. 将复测结果写回 `manual_actions`，并创建 `result_type='recheck'` 的采集批次和状态事实。
 
 ---
 
@@ -360,13 +398,13 @@ graph LR
 | `webapp/` | FastAPI 页面/API、鉴权、报告下载 | `webapp/main.py` | 启动、RAG、control、db |
 | `app_bootstrap.py` | 启动准备、状态检查、后台采集调度 | `bootstrap_runtime()` | db、collector、knowledge_base |
 | `project_config.py` | 只加载项目根 `.env`，布尔配置解析 | `load_project_env()`、`env_flag()` | python-dotenv |
-| `collector/` | 设备台账、SSH/SNMP/Ping 采集、SQLite 访问 | `run_collect.py`、`db.py` | Netmiko、PySNMP、sqlite3 |
+| `collector/` | 台账同步、SSH/SNMP/Ping 采集、输出解析、批次落库 | `run_collect.py`、`db.py`、`state_parser.py` | Netmiko、PySNMP、sqlite3 |
 | `knowledge_base/` | 文章、Embedding、建索引、检索 | `build_index.py`、`retriever.py` | Chroma、FastEmbed |
 | `rag_engine/` | 设备识别、证据构建、Prompt、LLM、脱敏 | `diagnosis_engine.py` | db、retriever、OpenAI |
 | `control/` | 只读校验、配置备份、人工变更状态机 | `manual_change_workflow.py` | db、Netmiko |
 | `network/` | 设备台账静态数据 | `device_inventory.json` | 无 |
 | `test_cases/` | 10 个故障场景与 KB 对比演示 | `compare_kb.py` | 全链路 |
-| `tests/` | 单元、启动、鉴权、慢速检索测试 | `pytest` | pytest |
+| `tests/` | 解析器、数据库迁移、采集编排、启动、鉴权和慢速检索测试 | `pytest` | pytest |
 
 ### 5.3 核心文件阅读优先级
 
@@ -383,166 +421,50 @@ graph LR
 
 ---
 
-## 6. SQLite 数据模型
+## 6. SQLite 数据模型（一期）
 
-数据库路径：`SQLITE_DB_PATH`，默认 `data/ops.db`。所有访问都应经过
-[collector/db.py](collector/db.py)，不要在业务模块中直接拼接 SQLite 连接。
+数据库路径由 `SQLITE_DB_PATH` 指定，默认 `data/ops.db`。所有访问都经过
+[collector/db.py](collector/db.py)。
 
-### 6.1 ER 图
+完整表结构、字段、Mermaid ER 图、索引和迁移规则已拆分到
+[docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。README 只保留最重要的数据链。
 
 ```mermaid
-erDiagram
-    DEVICES ||--o{ COLLECTION_RECORDS : "device_name"
-    DIAGNOSIS_RECORDS ||--o{ MANUAL_ACTIONS : "diagnosis_id"
-    SYSTEM_STATUS {
-        text status_key PK
-        text status_json
-        text updated_at
-    }
-    DEVICES {
-        text device_name PK
-        text role
-        text site
-        text vendor
-        text model
-        text mgmt_ip
-        text device_type
-        text raw_json
-    }
-    COLLECTION_RECORDS {
-        integer id PK
-        text device_name FK
-        text collected_at
-        text status
-        text fail_reason
-        text command
-        text raw_output
-        text parsed_json
-    }
-    DIAGNOSIS_RECORDS {
-        integer id PK
-        text created_at
-        text question
-        text model_id
-        text prompt_template_id
-        text llm_params_json
-        text retrieved_doc_ids_json
-        text evidence_json
-        text answer_json
-        integer use_kb
-        integer response_time_ms
-    }
-    MANUAL_ACTIONS {
-        integer id PK
-        integer diagnosis_id FK
-        text created_at
-        text operator
-        text action_desc
-        text backup_ref
-        text recheck_result
-        text status
-    }
+flowchart LR
+    RUN["collection_runs<br/>一次采集批次"] --> RESULT["device_capture_results<br/>每台设备的结果"]
+    RESULT --> ITEM["collection_items<br/>SSH/SNMP/Ping 采集项"]
+    ITEM --> OBS["state_observations<br/>接口、路由、VLAN、ACL、邻居、可达性"]
+    OBS --> CURRENT["当前状态读模型<br/>只取已发布批次"]
+    OBS --> TOPO["topology_snapshots<br/>拓扑快照"]
+    CURRENT --> RAG["RAG 诊断证据"]
 ```
 
-> 诊断记录与采集记录之间没有物理外键。诊断时会把所用证据复制进
-> `diagnosis_records.evidence_json`，形成历史快照，避免后续采集覆盖导致诊断依据变化。
+一期新增或重建的核心表：
 
-### 6.2 `devices`：设备台账缓存
+- 资产与台账：`sites`、`devices`、`device_aliases`、`device_endpoints`、`interfaces`、
+  `inventory_versions`、`inventory_items`；
+- 采集与状态：`collection_runs`、`device_capture_results`、`collection_items`、
+  `raw_blobs`、`state_observations`、`config_snapshots`、`command_policies`；
+- 拓扑：`topology_snapshots`、`topology_nodes`、`topology_edges`；
+- 迁移：`schema_migrations`。
 
-用途：把 `network/device_inventory.json` 同步到数据库，供设备识别、页面展示和采集复用。
+当前状态只使用 `published_at_utc` 非空的已发布结果。设备最近一次采集不可达时，
+接口、路由等历史成功事实不会作为当前证据。旧 `collection_records` 表迁移后保留为
+`collection_records_legacy`，并创建同名兼容视图，现有页面和诊断 API 不需要同时切换。
+新表时间统一为 UTC；迁移会把旧库的 `+08:00` 时间归一化，并按真实时间而不是
+ISO 字符串排序选择最新结果。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `device_name` | TEXT PK | 设备唯一名称，如 `BR-A-R2` |
-| `role` | TEXT | 设备角色 |
-| `site` | TEXT | 站点，如“总部”“分支A” |
-| `vendor` / `model` | TEXT | 厂商和型号 |
-| `mgmt_ip` | TEXT | 管理 IP |
-| `device_type` | TEXT | Netmiko 类型，如 `cisco_ios` |
-| `raw_json` | TEXT | 完整台账 JSON，包含 SSH/SNMP 端口和接口列表 |
+`diagnosis_records`、`manual_actions`、`system_status` 仍保留给当前诊断、人工流程
+和启动状态使用；LLM 会话、工具调用、人工变更事件和评测表属于后续阶段。
 
-启动时只有 `devices` 为空才会从台账加载；已有设备不会被删除。
+首次升级旧库时执行：
 
-### 6.3 `collection_records`：采集事实表
+```bash
+python -m collector.migrate
+```
 
-用途：追加保存每一次 SSH 命令、SNMP 轮询、Ping 和人工复测结果。
-
-| 字段 | 说明 |
-|---|---|
-| `id` | 自增主键，也是“最近一次”的主要排序依据 |
-| `device_name` | 关联设备名 |
-| `collected_at` | ISO8601 时间，带本地时区偏移 |
-| `status` | `success` / `failed` |
-| `fail_reason` | 失败原因 |
-| `command` | 原命令；SNMP 使用 `SNMP:ifTable+sysUpTime`，Ping 使用 `ping <ip>` |
-| `raw_output` | 原始文本或 SNMP 解析文本 |
-| `parsed_json` | 结构化结果 JSON 字符串 |
-
-索引：`(device_name, collected_at DESC)`。
-
-“最新”逻辑：
-
-- 总览页 `get_all_latest_status()` 使用 `MAX(id) GROUP BY device_name, command`；
-- 单设备 `get_latest_record()` 使用 `ORDER BY collected_at DESC`；
-- 诊断证据按 `device_name + command` 取最大 `id`。
-
-表没有 `(device_name, command, collected_at)` 唯一约束，重复采集会产生新行。当前没有自动清理策略。
-
-### 6.4 `diagnosis_records`：诊断审计表
-
-| 字段 | 说明 |
-|---|---|
-| `question` | 原始用户问题 |
-| `model_id` | 实际使用的 LLM 模型 |
-| `prompt_template_id` | Prompt 版本，如 `diagnosis_v1` |
-| `llm_params_json` | 模型、temperature、max_tokens 等 |
-| `retrieved_doc_ids_json` | 本次命中的知识库 ID 列表 |
-| `evidence_json` | 本次证据快照 |
-| `answer_json` | 模型结构化 JSON |
-| `use_kb` | 是否请求启用知识库；1/0 |
-| `response_time_ms` | 模型调用耗时 |
-
-这张表是**审计记录**，不应在读取历史诊断时重新查询实时设备证据。
-
-### 6.5 `manual_actions`：人工处置状态
-
-| 状态 | 含义 |
-|---|---|
-| `confirmed` | 已确认且配置备份成功，等待人工变更 |
-| `backup_failed` | 备份失败，不能继续变更 |
-| `completed` | 人工变更后复测成功 |
-| `recheck_failed` | 复测仍失败 |
-| `rejected` | 人工驳回模型建议 |
-
-`backup_ref` 指向 `reports/backups/<device>_<timestamp>.cfg`，保存原始运行配置。
-
-### 6.6 `system_status`：运行状态快照
-
-键值表，每行是一组 JSON 状态。当前写入四类键：
-
-| `status_key` | 内容 |
-|---|---|
-| `database` | 数据库是否就绪、设备数、台账是否导入、路径、警告 |
-| `knowledge_base` | `ready/missing/empty/error`、集合名、模型、条目数、路径、检查时间 |
-| `startup_collection` | 采集状态、时间、模式、SSH/SNMP 成功失败数、缺失设备、错误 |
-| `runtime` | 数据库与知识库的聚合状态：`ready/degraded`，并包含启动采集当时的快照 |
-
-`startup_collection.status` 可能为：
-
-`running`、`success`、`partial`、`failed`、`skipped`、`disabled`。
-
-`runtime` 暂时只根据数据库和知识库判定是否 `degraded`；启动采集失败记录在独立的
-`startup_collection` 键中，不会把整个 Web 服务标记为不可用。
-
-这些状态目前只写入数据库，尚未提供 App 查询接口或页面，见 [TODO.md](TODO.md)。
-
-### 6.7 数据一致性与当前限制
-
-- 每次数据库操作创建独立连接，提交后关闭。
-- 建表使用 `CREATE TABLE IF NOT EXISTS`，**没有迁移框架**；字段变更需自行提供迁移方案。
-- 表结构声明了外键，但连接未执行 `PRAGMA foreign_keys=ON`，外键目前不具强制约束力。
-- SQLite 适合当前单机规模；不适合多实例并发写和长期无清理的高频采集。
-- 备份文件含设备原始配置；数据库诊断证据在入库前脱敏，但备份文件本身是原始配置。
+迁移前会自动生成 `<db>.pre-phase1-<timestamp>.bak`。迁移细节见
+[docs/DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)。
 
 ---
 
@@ -717,8 +639,7 @@ Python 进程。`APP_RELOAD=true` 只用于开发环境。
 
 当前需要注意的实现细节：
 
-- `control/readonly_executor.py` 是一条独立只读执行路径，尚未调用 `sanitize_text()` 再写
-  `raw_output`。启用到 Web 操作前应先补齐脱敏和测试。
+- `control/readonly_executor.py` 的原始输出写库前已调用 `sanitize_text()`。
 - `os.chmod(600)` 在 Windows 上不能替代 NTFS ACL；敏感备份应额外设置 Windows 权限。
 - 登录 Cookie 保存的是同一访问令牌，适合当前单用户/受控环境，不等同于多用户身份系统。
 
@@ -741,7 +662,8 @@ python -m compileall -q collector rag_engine knowledge_base control webapp app_b
 
 | 层 | 内容 |
 |---|---|
-| 纯函数 | 脱敏、白名单、设备识别、证据过期、JSON 解析 |
+| 纯函数 | 脱敏、白名单、设备识别、证据过期、JSON 解析、SSH/VLAN/ACL/CDP 解析 |
+| 数据库 | 批量采集、设备不可达、当前状态、拓扑快照、旧库迁移 |
 | 编排 | 数据库/知识库启动检查、后台采集状态、采集摘要 |
 | 配置 | 项目 `.env` 不回退父目录 |
 | Web | Token 鉴权、登录 Cookie、页面和静态资源 |
@@ -771,6 +693,8 @@ python -m compileall -q collector rag_engine knowledge_base control webapp app_b
 | LLM 调用失败 | `LLM_API_KEY`、`LLM_BASE_URL`、模型名、网络 |
 | 页面无设备 | 数据库是否已加载台账；查看 `system_status.database` |
 | 诊断历史正常但证据旧 | 查看 `collected_at` 和 `is_stale`，重新采集 |
+| 旧库升级后表为空 | 检查 `schema_migrations`、`devices_legacy`、`collection_records_legacy` |
+| 设备最近采集失败但页面仍有旧状态 | 检查 `collection_runs.published_at_utc` 和 `device_capture_results` |
 
 ### 11.5 演示与效果对比
 
@@ -780,7 +704,8 @@ python -m test_cases.demo_e2e
 ```
 
 `compare_kb` 会使用隔离的临时 SQLite/Chroma，对比 10 个场景在
-`use_kb=True/False` 下的结果，默认仍需要有效 LLM Key 才能得到真实模型输出。
+`use_kb=True/False` 下的结果；每个场景开始前会清空临时采集证据，避免前一个
+场景污染当前状态。默认仍需要有效 LLM Key 才能得到真实模型输出。
 
 真实排障演示：
 
@@ -810,21 +735,23 @@ python -m test_cases.demo_e2e
 | 需求 | 主要修改位置 | 同步事项 |
 |---|---|---|
 | 新增设备类型 | `network/device_inventory.json`、`collector/whitelist_commands.py` | 检查 Netmiko 类型、SNMP、页面展示 |
-| 新增采集命令 | `collector/whitelist_commands.py`、`collector_ssh.py` | 更新白名单测试 |
+| 新增采集命令 | `collector/whitelist_commands.py`、`collector_ssh.py`、`collector/state_parser.py` | 更新白名单和解析测试 |
+| 新增状态类型 | `collector/state_parser.py`、`collector/db.py` | 同步 `state_type` CHECK、证据摘要和测试 |
 | 新增采集来源 | `collector/`、`run_collect.py` | 扩展摘要和 `startup_collection` 状态 |
 | 新增知识文章 | `knowledge_base/articles.json` | `--rebuild` 并增加检索测试 |
 | 更换 Embedding 模型 | `.env`、`knowledge_base/` | 清理旧集合、完整重建、离线验证 |
 | 修改诊断流程 | `rag_engine/diagnosis_engine.py` | 同步证据、Prompt、响应字段和测试 |
 | 修改 Prompt 结构 | `rag_engine/prompt_templates.py` | 更新模板 ID 和前端渲染/报告导出 |
 | 新增页面/API | `webapp/main.py`、`webapp/templates/` | 鉴权自动生效，补 Web 测试 |
-| 新增数据库字段 | `collector/db.py` 的 `SCHEMA` 和访问函数 | 增加迁移、写入方、读取方、测试 |
+| 新增数据库字段 | `collector/db.py`、`docs/DATABASE_DESIGN.md` | 增加 `schema_migrations` 迁移、写入方、读取方、迁移测试 |
 | 修改启动行为 | `webapp/main.py` lifespan、`app_bootstrap.py` | 更新启动状态和测试 |
 | 新增配置 | `.env.example`、`project_config` 使用方 | README 和安全说明 |
 | 修改人工变更流程 | `control/manual_change_workflow.py` | `manual_actions` 状态和 UI |
 
 ### 12.1 改动时必须保持的不变量
 
-1. 不得把模型输出直接当作设备事实；证据必须来自 `collection_records`。
+1. 不得把模型输出直接当作设备事实；证据必须来自已发布的 `collection_items` 和
+   `state_observations`。
 2. 不得新增自动配置下发路径；变更必须经过人工确认和备份。
 3. 不得绕过 `collector/whitelist_commands.py` 执行自动设备命令。
 4. 建索引和查询必须使用同一 Embedding 模型/路径。
@@ -844,7 +771,7 @@ python -m test_cases.demo_e2e
 | 1 | 本 README 的 3-4 节 | 知道进程、存储、启动和诊断链路 | 10 min |
 | 2 | [webapp/main.py](webapp/main.py) | 找到所有 API、lifespan 和页面入口 | 5 min |
 | 3 | [app_bootstrap.py](app_bootstrap.py) | 理解启动准备和后台采集 | 5 min |
-| 4 | [collector/db.py](collector/db.py) | 掌握五张表和唯一数据入口 | 10 min |
+| 4 | [collector/db.py](collector/db.py) | 掌握一期表、采集批次和当前状态规则 | 15 min |
 | 5 | [rag_engine/diagnosis_engine.py](rag_engine/diagnosis_engine.py) | 串起一次诊断调用 | 5 min |
 
 ### 13.2 理解诊断数据流
@@ -852,7 +779,7 @@ python -m test_cases.demo_e2e
 ```text
 用户问题
   → device_extractor 识别站点/设备
-  → evidence_builder 读取最新采集事实
+  → evidence_builder 读取已发布的当前设备快照
   → sanitize 脱敏
   → retriever 检索运维文章
   → prompt_templates 组装 Prompt
@@ -879,10 +806,13 @@ python -m test_cases.demo_e2e
 ├── project_config.py             # 项目 .env 显式加载
 ├── webapp/                       # FastAPI、模板、鉴权、报告导出
 ├── collector/                    # 台账、SSH/SNMP/Ping、SQLite
+│   ├── state_parser.py           # 原始输出 -> 状态事实
+│   └── migrate.py                # 一期数据库迁移入口
 ├── knowledge_base/               # 文章、Embedding、Chroma 检索
 ├── rag_engine/                   # 设备识别、证据、Prompt、LLM
 ├── control/                      # 只读执行、备份、人工流程
 ├── network/device_inventory.json # 设备唯一静态台账
+├── docs/DATABASE_DESIGN.md       # 一期数据库结构与迁移设计
 ├── test_cases/                   # 10 场景对比和 E2E 演示
 ├── tests/                        # pytest
 ├── requirements/                 # base/build/collect/dev 分层依赖
@@ -897,10 +827,10 @@ python -m test_cases.demo_e2e
 
 - 知识库状态、初始化、重建和文章管理还没有 App 页面/API，见 [TODO.md](TODO.md)。
 - 启动采集是进程内 daemon 线程，没有持久任务、重试、取消和多 worker 协调。
-- 没有数据库迁移框架，`CREATE TABLE IF NOT EXISTS` 不会自动升级旧表。
-- SQLite 外键声明尚未通过 `PRAGMA foreign_keys=ON` 启用。
-- `collection_records` 和诊断记录目前没有保留期限、归档或清理策略。
-- `control/readonly_executor.py` 写库前尚未统一脱敏。
+- 一期已引入 `schema_migrations`、外键检查和旧库自动迁移；后续表结构变更仍需按版本追加迁移。
+- 采集状态事实、原始输出、配置快照和诊断记录还没有保留期限、归档或清理策略。
+- 一期的当前状态读模型仍然是函数/查询实现，尚未拆成独立物化表或缓存层。
+- LLM 会话、工具调用、人工变更事件和评测表尚未实现，只是一期文档中的后续边界。
 - 单设备采集串行执行，设备多时启动采集会持续较长时间。
 - LLM 调用是同步 OpenAI SDK；当前依赖 FastAPI 线程池，尚未做流式/异步任务。
 - `system_status.startup_collection` 已有持久化状态，但还没有查询 API 和页面。
@@ -908,6 +838,7 @@ python -m test_cases.demo_e2e
 
 相关文档：
 
+- [一期数据库结构设计](docs/DATABASE_DESIGN.md)
 - [Windows 运行与调试指南](WINDOWS_DEVELOPMENT_GUIDE.md)
 - [知识库管理 TODO](TODO.md)
 - [环境变量模板](.env.example)

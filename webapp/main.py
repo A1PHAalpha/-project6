@@ -72,12 +72,7 @@ def index(request: Request):
 
 @app.get("/device/{device_name}", response_class=HTMLResponse)
 def device_detail(request: Request, device_name: str):
-    with db.get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM collection_records WHERE device_name=? ORDER BY collected_at DESC LIMIT 50",
-            (device_name,),
-        ).fetchall()
-    records = [dict(r) for r in rows]
+    records = db.get_device_collection_history(device_name, limit=50)
     return templates.TemplateResponse(
         "device_detail.html",
         {"request": request, "device_name": device_name, "records": records},

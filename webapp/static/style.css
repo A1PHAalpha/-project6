@@ -60,6 +60,8 @@ table th { background: #f0f2f5; font-weight: 600; }
 .badge-success { background: #e3f7e8; color: #1a7f37; }
 .badge-failed { background: #fde8e8; color: #c22; }
 .badge-no_data { background: #eee; color: #777; }
+.badge-unknown { background: #eee; color: #777; }
+.badge-partial { background: #fff3cd; color: #9a6700; }
 .badge-stale { background: #fff3cd; color: #9a6700; }
 
 .btn {
