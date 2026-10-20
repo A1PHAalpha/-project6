@@ -112,8 +112,27 @@ def run_collection(
 ) -> dict:
     """执行一次采集，返回机器可读摘要。"""
     db.init_db()
-    inventory = db.load_inventory_with_version(INVENTORY_PATH)
-    devices = inventory["devices"]
+    # SQLite is the runtime inventory. JSON is used only by bootstrap seeding
+    # or by an explicit inventory import.
+    devices = []
+    for record in db.list_active_devices():
+        raw = db._json_value(record.get("raw_json")) or {}
+        devices.append(
+            {
+                **raw,
+                "device_id": record["device_id"],
+                "device_name": record["device_name"],
+                "device_type": record.get("device_type"),
+                "mgmt_ip": record.get("mgmt_ip"),
+                "site": record.get("site"),
+                "role": record.get("role"),
+                "vendor": record.get("vendor"),
+                "model": record.get("model"),
+                "ssh_port": raw.get("ssh_port", 22),
+                "snmp_port": raw.get("snmp_port"),
+            }
+        )
+    inventory_version_id = db.get_application_setting("active_inventory_version_id")
     logger.info("已加载设备台账，共 %d 台设备", len(devices))
 
     username = os.getenv("DEVICE_USERNAME")
@@ -149,7 +168,7 @@ def run_collection(
         scope_type=scope_type,
         requested_by=requested_by,
         source_ref=source_ref,
-        inventory_version_id=inventory["inventory_version_id"],
+        inventory_version_id=inventory_version_id,
         scope={"devices": [device["device_name"] for device in selected]},
         tool_version="phase2",
     )
@@ -254,7 +273,7 @@ def run_collection(
             "connectivity_tests": connectivity_tests,
             "connectivity_successes": connectivity_successes,
             "connectivity_failures": connectivity_failures,
-            "inventory_version_id": inventory["inventory_version_id"],
+            "inventory_version_id": inventory_version_id,
             "published_at_utc": _utc_now(),
         }
         db.finish_collection_run(run_id, run_status, summary, publish=True)

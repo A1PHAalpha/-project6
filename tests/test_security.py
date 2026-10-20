@@ -15,6 +15,7 @@ from webapp.security import (
     is_valid_token,
     login,
     login_page,
+    login_redirect,
     logout,
 )
 
@@ -66,6 +67,16 @@ def test_bearer_token_ok():
 def test_cookie_token_ok():
     request = _request(cookies={"netops_token": TOKEN})
     assert is_valid_token(_extract_token(request)) is True
+
+
+def test_unauthenticated_html_redirect_preserves_safe_next_path():
+    request = _request(
+        path="/console/overview",
+        headers={"Accept": "text/html"},
+    )
+    response = login_redirect(request)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login?next=%2Fconsole%2Foverview"
 
 
 def test_login_sets_http_only_cookie():

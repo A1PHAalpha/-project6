@@ -69,11 +69,11 @@ def build_index(rebuild: bool = False):
 
     try:
         if rebuild:
-            try:
-                client.delete_collection(COLLECTION_NAME)
-                logger.info("已删除旧集合，准备重建")
-            except Exception:
-                pass
+            # A full build still uses an upsert into the active collection so a
+            # temporary embedding/model failure cannot destroy the last usable
+            # index. The database publishes a new index version only after all
+            # articles have been written successfully.
+            logger.info("全量构建将对当前集合执行完整 upsert，构建失败时旧数据保持可用")
 
         collection = client.get_or_create_collection(
             name=COLLECTION_NAME,

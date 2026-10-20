@@ -65,7 +65,7 @@ def test_v4_database_upgrades_to_phase3(tmp_path, monkeypatch):
     with db.get_conn() as upgraded:
         assert upgraded.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == db.SCHEMA_VERSION
         assert upgraded.execute(
             "SELECT COUNT(*) FROM knowledge_articles"
         ).fetchone()[0] == 26

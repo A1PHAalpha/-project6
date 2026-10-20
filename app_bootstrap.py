@@ -36,21 +36,34 @@ _collection_thread_lock = threading.Lock()
 
 
 def ensure_database() -> dict:
-    """Initialize SQLite and synchronize the device inventory into a new version."""
+    """Initialize SQLite and seed the device inventory only into an empty database.
+
+    SQLite is the runtime source of truth. The JSON file is a first-run seed and
+    an explicit import/export format; a restart must never overwrite devices
+    added, edited, or retired through the console.
+    """
     db.init_db()
     devices = db.list_devices()
     inventory_loaded = False
     warning = None
 
-    if INVENTORY_PATH.exists():
+    if devices:
+        # Existing runtime inventory wins over the seed file.
+        inventory_loaded = False
+    elif INVENTORY_PATH.exists():
         try:
             inventory = db.load_inventory_with_version(str(INVENTORY_PATH))
             devices = db.list_devices()
             inventory_loaded = True
+            db.set_application_setting(
+                "active_inventory_version_id",
+                inventory.get("inventory_version_id"),
+                actor="inventory_loader",
+            )
         except Exception as exc:
             logger.exception("设备台账加载失败")
             warning = f"设备台账加载失败: {type(exc).__name__}: {exc}"
-    else:
+    elif not devices:
         warning = f"设备台账不存在: {INVENTORY_PATH}"
 
     status = {
@@ -58,7 +71,9 @@ def ensure_database() -> dict:
         "schema_version": db.SCHEMA_VERSION,
         "device_count": len(devices),
         "inventory_loaded": inventory_loaded,
-        "inventory_version_id": inventory.get("inventory_version_id") if inventory_loaded else None,
+        "inventory_version_id": (
+            inventory.get("inventory_version_id") if inventory_loaded else None
+        ),
         "db_path": db.DB_PATH,
         "warning": warning,
     }

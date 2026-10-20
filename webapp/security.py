@@ -11,6 +11,7 @@
 """
 import os
 import secrets
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -57,6 +58,17 @@ def _is_public(path: str) -> bool:
     return any(path.startswith(p) for p in PUBLIC_PREFIXES)
 
 
+def login_redirect(request: Request) -> RedirectResponse:
+    """Build the login redirect while preserving the requested in-app path."""
+    next_path = request.url.path
+    if request.url.query:
+        next_path = f"{next_path}?{request.url.query}"
+    return RedirectResponse(
+        url=f"/login?next={quote(next_path, safe='')}",
+        status_code=302,
+    )
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if _is_public(request.url.path):
@@ -65,7 +77,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         # 浏览器页面请求跳转登录页；API / 脚本请求返回 401
         if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
-            return RedirectResponse(url="/login", status_code=302)
+            return login_redirect(request)
         return JSONResponse({"error": "未授权"}, status_code=401)
 
 

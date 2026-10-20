@@ -1,0 +1,3300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NetOps Console · 最终版设计稿 v2.0</title>
+<style>
+  :root {
+    --bg: #070D18;
+    --bg-2: #0A1322;
+    --panel: #0F1A2C;
+    --panel-2: #132238;
+    --panel-3: #172941;
+    --line: #1E3049;
+    --line-soft: #263B58;
+    --text: #E7EEF8;
+    --text-2: #A9B8CD;
+    --text-3: #6F829C;
+    --accent: #38D3F5;
+    --accent-2: #1FA7C9;
+    --accent-dim: rgba(56, 211, 245, 0.10);
+    --green: #3ED598;
+    --green-dim: rgba(62, 213, 152, 0.10);
+    --amber: #F5B94C;
+    --amber-dim: rgba(245, 185, 76, 0.10);
+    --red: #F2777A;
+    --red-dim: rgba(242, 119, 122, 0.10);
+    --violet: #B49CF8;
+    --violet-dim: rgba(180, 156, 248, 0.10);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --sidebar: 236px;
+    --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
+    --shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    color-scheme: dark;
+  }
+  button, input, select, textarea { font: inherit; }
+  button { color: inherit; }
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: rgba(56, 211, 245, 0.26); }
+
+  .app {
+    display: grid;
+    grid-template-columns: var(--sidebar) minmax(0, 1fr);
+    height: 100vh;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    position: relative;
+    z-index: 40;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(420px 240px at 0% 0%, rgba(56, 211, 245, 0.08), transparent 60%),
+      linear-gradient(180deg, #0B1627 0%, #08111F 100%);
+    border-right: 1px solid var(--line);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 18px 18px 16px;
+    border-bottom: 1px solid rgba(30, 48, 73, 0.72);
+  }
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(145deg, #4BE1FF, #1D8FCA 70%, #176FA2);
+    color: #03121C;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: -0.6px;
+    box-shadow: 0 8px 22px rgba(29, 143, 202, 0.28);
+  }
+  .brand-name { font-size: 14px; font-weight: 700; letter-spacing: 0.1px; }
+  .brand-sub { font-size: 10.5px; color: var(--text-3); margin-top: 1px; }
+  .nav {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 10px;
+  }
+  .nav-group { margin-bottom: 14px; }
+  .nav-label {
+    padding: 5px 10px 6px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .nav-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    padding: 8px 10px;
+    margin: 2px 0;
+    border-radius: 8px;
+    color: var(--text-2);
+    cursor: pointer;
+    border: 1px solid transparent;
+    user-select: none;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+  .nav-item:hover { background: rgba(255, 255, 255, 0.035); color: var(--text); }
+  .nav-item.active {
+    background: linear-gradient(90deg, rgba(56, 211, 245, 0.13), rgba(56, 211, 245, 0.04));
+    border-color: rgba(56, 211, 245, 0.20);
+    color: #DDF9FF;
+  }
+  .nav-item.active::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 9px;
+    bottom: 9px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(56, 211, 245, 0.6);
+  }
+  .nav-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    display: grid;
+    place-items: center;
+    opacity: 0.92;
+  }
+  .nav-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+  .nav-text { font-size: 12.5px; font-weight: 550; white-space: nowrap; }
+  .nav-badge {
+    margin-left: auto;
+    min-width: 19px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-2);
+  }
+  .nav-badge.warn { background: var(--amber-dim); color: var(--amber); }
+  .nav-badge.danger { background: var(--red-dim); color: var(--red); }
+  .nav-badge.accent { background: var(--accent-dim); color: var(--accent); }
+
+  .sidebar-foot {
+    padding: 13px 16px 15px;
+    border-top: 1px solid rgba(30, 48, 73, 0.8);
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+  .side-health {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-2);
+    font-size: 11px;
+    margin-bottom: 5px;
+  }
+  .side-health .dot { box-shadow: 0 0 9px rgba(62, 213, 152, 0.72); }
+  .side-note { line-height: 1.5; }
+
+  /* ===== Topbar ===== */
+  .main {
+    min-width: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(1000px 460px at 82% -12%, rgba(56, 211, 245, 0.055), transparent 58%),
+      radial-gradient(800px 500px at 10% 110%, rgba(50, 96, 180, 0.055), transparent 58%),
+      var(--bg);
+  }
+  .topbar {
+    height: 56px;
+    flex: 0 0 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 0 22px;
+    border-bottom: 1px solid rgba(30, 48, 73, 0.86);
+    background: rgba(7, 13, 24, 0.76);
+    backdrop-filter: blur(14px);
+    z-index: 30;
+  }
+  .topbar-left, .topbar-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .menu-btn {
+    display: none;
+    width: 32px; height: 32px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    cursor: pointer;
+  }
+  .crumb { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .crumb strong { color: var(--text); font-weight: 600; }
+  .design-badge { margin-left: 2px; font-size: 9px; letter-spacing: 0.2px; }
+  .global-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 280px;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(15, 26, 44, 0.8);
+    color: var(--text-3);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .global-search:focus-within {
+    border-color: rgba(56, 211, 245, 0.38);
+    box-shadow: 0 0 0 3px rgba(56, 211, 245, 0.08);
+  }
+  .global-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+  }
+  .global-search input::placeholder { color: var(--text-3); }
+  .kbd {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border: 1px solid var(--line-soft);
+    border-bottom-color: #2E4869;
+    border-radius: 4px;
+    color: var(--text-3);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .freshness {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 10.5px;
+    color: var(--text-2);
+    white-space: nowrap;
+    background: rgba(15, 26, 44, 0.7);
+  }
+  .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 9px 3px 3px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(15, 26, 44, 0.7);
+    white-space: nowrap;
+  }
+  .avatar {
+    width: 25px; height: 25px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    background: linear-gradient(145deg, #2C4A6B, #1A304A);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 10px;
+    font-weight: 700;
+    color: #D9F4FF;
+  }
+  .user-chip .u-name { font-size: 11px; color: var(--text-2); }
+  .user-chip .u-role { font-size: 9.5px; color: var(--text-3); }
+
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 22px 44px;
+    scroll-behavior: smooth;
+  }
+  .page { display: none; max-width: 1560px; margin: 0 auto; animation: pageIn 0.2s ease; }
+  .page.active { display: block; }
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* ===== Common ===== */
+  .page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 16px;
+  }
+  .page-title {
+    font-size: 22px;
+    line-height: 1.25;
+    font-weight: 720;
+    letter-spacing: -0.35px;
+    margin: 0;
+  }
+  .page-sub {
+    margin-top: 5px;
+    max-width: 760px;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  .page-sub .mono { color: var(--text-3); }
+  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .action-group { display: flex; align-items: center; gap: 8px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 31px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: linear-gradient(180deg, #14243A, #101D30);
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+  }
+  .btn:hover { border-color: #35516F; background: linear-gradient(180deg, #172A44, #122137); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid rgba(56, 211, 245, 0.55); outline-offset: 2px; }
+  .btn.primary {
+    border-color: transparent;
+    background: linear-gradient(180deg, #43D9F7, #1FA6D0);
+    color: #03141D;
+    font-weight: 720;
+    box-shadow: 0 6px 18px rgba(31, 166, 208, 0.18);
+  }
+  .btn.primary:hover { filter: brightness(1.06); background: linear-gradient(180deg, #5AE2FC, #22AFD9); }
+  .btn.ghost { background: transparent; }
+  .btn.ghost:hover { background: rgba(255, 255, 255, 0.035); }
+  .btn.danger { color: var(--red); border-color: rgba(242, 119, 122, 0.30); background: var(--red-dim); }
+  .btn.danger:hover { background: rgba(242, 119, 122, 0.16); border-color: rgba(242, 119, 122, 0.46); }
+  .btn.sm { height: 27px; padding: 0 9px; font-size: 10.5px; border-radius: 7px; }
+  .btn.icon { width: 31px; padding: 0; }
+  .btn:disabled { opacity: 0.42; cursor: not-allowed; filter: none; }
+
+  .card {
+    background: linear-gradient(180deg, rgba(19, 34, 56, 0.82), rgba(15, 26, 44, 0.92));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 15px 16px;
+    min-width: 0;
+  }
+  .card.flush { padding: 0; overflow: hidden; }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 680;
+    letter-spacing: 0.05px;
+  }
+  .card-title .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 9px rgba(56, 211, 245, 0.6);
+  }
+  .card-meta { font-size: 10.5px; color: var(--text-3); }
+  .card-actions { display: flex; align-items: center; gap: 7px; }
+
+  .grid { display: grid; gap: 12px; }
+  .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .span-2 { grid-column: span 2; }
+  .span-3 { grid-column: span 3; }
+  .split-main { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(300px, 0.88fr); gap: 12px; }
+  .stack { display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .mt-12 { margin-top: 12px; }
+  .mt-14 { margin-top: 14px; }
+  .mb-8 { margin-bottom: 8px; }
+  .mb-10 { margin-bottom: 10px; }
+  .mono { font-family: var(--mono); font-size: 10.8px; letter-spacing: -0.1px; }
+  .muted { color: var(--text-2); }
+  .dim { color: var(--text-3); }
+  .tiny { font-size: 10px; }
+  .nowrap { white-space: nowrap; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fill { flex: 1; min-width: 0; }
+  .center { display: flex; align-items: center; }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: 0 0 7px;
+    background: var(--text-3);
+  }
+  .status-dot.ok { background: var(--green); box-shadow: 0 0 8px rgba(62, 213, 152, 0.65); }
+  .status-dot.warn { background: var(--amber); box-shadow: 0 0 8px rgba(245, 185, 76, 0.65); }
+  .status-dot.danger { background: var(--red); box-shadow: 0 0 8px rgba(242, 119, 122, 0.65); }
+  .status-dot.unknown { background: #61738C; }
+  .status-dot.accent { background: var(--accent); box-shadow: 0 0 8px rgba(56, 211, 245, 0.6); }
+  .status-text { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap; }
+  .status-text.ok { color: var(--green); }
+  .status-text.warn { color: var(--amber); }
+  .status-text.danger { color: var(--red); }
+  .status-text.unknown { color: var(--text-3); }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 20px;
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--text-2);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .tag.ok { color: var(--green); background: var(--green-dim); border-color: rgba(62, 213, 152, 0.24); }
+  .tag.warn { color: var(--amber); background: var(--amber-dim); border-color: rgba(245, 185, 76, 0.24); }
+  .tag.danger { color: var(--red); background: var(--red-dim); border-color: rgba(242, 119, 122, 0.24); }
+  .tag.accent { color: var(--accent); background: var(--accent-dim); border-color: rgba(56, 211, 245, 0.24); }
+  .tag.violet { color: var(--violet); background: var(--violet-dim); border-color: rgba(180, 156, 248, 0.24); }
+  .tag.plain { color: var(--text-3); }
+  .tag.square { border-radius: 5px; }
+
+  .banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.018);
+    color: var(--text-2);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .banner .b-icon {
+    width: 18px; height: 18px;
+    flex: 0 0 18px;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 800;
+    margin-top: 1px;
+  }
+  .banner.info { border-color: rgba(56, 211, 245, 0.20); background: rgba(56, 211, 245, 0.055); }
+  .banner.info .b-icon { background: var(--accent-dim); color: var(--accent); }
+  .banner.warn { border-color: rgba(245, 185, 76, 0.22); background: rgba(245, 185, 76, 0.055); }
+  .banner.warn .b-icon { background: var(--amber-dim); color: var(--amber); }
+  .banner.danger { border-color: rgba(242, 119, 122, 0.22); background: rgba(242, 119, 122, 0.055); }
+  .banner.danger .b-icon { background: var(--red-dim); color: var(--red); }
+  .banner.ok { border-color: rgba(62, 213, 152, 0.22); background: rgba(62, 213, 152, 0.055); }
+  .banner.ok .b-icon { background: var(--green-dim); color: var(--green); }
+  .banner strong { color: var(--text); font-weight: 650; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .kpi {
+    position: relative;
+    padding: 13px 14px 12px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: linear-gradient(180deg, rgba(19, 34, 56, 0.75), rgba(13, 23, 39, 0.92));
+    overflow: hidden;
+  }
+  .kpi::after {
+    content: "";
+    position: absolute;
+    right: -26px; top: -30px;
+    width: 98px; height: 98px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(56, 211, 245, 0.07), transparent 68%);
+  }
+  .kpi-label { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3); }
+  .kpi-value { margin-top: 3px; font-size: 24px; line-height: 1.1; font-weight: 750; letter-spacing: -0.8px; }
+  .kpi-value small { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0; margin-left: 3px; }
+  .kpi-value.ok { color: var(--green); }
+  .kpi-value.warn { color: var(--amber); }
+  .kpi-value.danger { color: var(--red); }
+  .kpi-value.accent { color: var(--accent); }
+  .kpi-meta { margin-top: 4px; font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi-meta strong { color: var(--text-2); font-weight: 600; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    padding: 9px 11px;
+    text-align: left;
+    font-size: 9.5px;
+    letter-spacing: 0.55px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.018);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td {
+    padding: 9px 11px;
+    border-bottom: 1px solid rgba(30, 48, 73, 0.62);
+    font-size: 11.5px;
+    vertical-align: middle;
+    color: var(--text-2);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover td, tbody tr:hover td { background: rgba(56, 211, 245, 0.025); }
+  td .primary-text { color: var(--text); font-weight: 600; }
+  td .sub-text { display: block; margin-top: 1px; font-size: 10px; color: var(--text-3); }
+  .table-note { padding: 9px 12px; border-top: 1px solid var(--line); font-size: 10px; color: var(--text-3); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .cell-actions { display: flex; gap: 5px; justify-content: flex-end; }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 11px;
+  }
+  .field, .select, .textarea {
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: rgba(7, 13, 24, 0.62);
+    color: var(--text);
+    padding: 0 9px;
+    font-size: 11px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field::placeholder, .textarea::placeholder { color: var(--text-3); }
+  .field:focus, .select:focus, .textarea:focus {
+    border-color: rgba(56, 211, 245, 0.4);
+    box-shadow: 0 0 0 3px rgba(56, 211, 245, 0.075);
+  }
+  .select { padding-right: 26px; }
+  .textarea { height: auto; min-height: 82px; padding: 8px 9px; resize: vertical; width: 100%; line-height: 1.5; }
+  .field-lg { min-width: 240px; }
+  .field-sm { width: 120px; }
+  .result-count { margin-left: auto; color: var(--text-3); font-size: 10px; white-space: nowrap; }
+
+  .segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(7, 13, 24, 0.7);
+  }
+  .seg {
+    height: 25px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .seg:hover { color: var(--text-2); }
+  .seg.active {
+    color: var(--accent);
+    background: rgba(56, 211, 245, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(56, 211, 245, 0.16);
+  }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 13px; }
+  .tab {
+    position: relative;
+    padding: 8px 12px 9px;
+    border: 0;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text-2); }
+  .tab.active { color: var(--text); }
+  .tab.active::after {
+    content: "";
+    position: absolute;
+    left: 8px; right: 8px; bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 9px rgba(56, 211, 245, 0.48);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .chip {
+    height: 25px;
+    padding: 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.018);
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .chip:hover { color: var(--text-2); border-color: var(--line-soft); }
+  .chip.active { color: var(--accent); border-color: rgba(56, 211, 245, 0.32); background: var(--accent-dim); }
+
+  .timeline { position: relative; padding-left: 16px; }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 4px; top: 5px; bottom: 6px;
+    width: 1px;
+    background: var(--line);
+  }
+  .tl-item { position: relative; padding: 0 0 12px 8px; }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-item::before {
+    content: "";
+    position: absolute;
+    left: -15px; top: 3px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 0 2px rgba(7, 13, 24, 0.9);
+  }
+  .tl-item.ok::before { border-color: var(--green); }
+  .tl-item.warn::before { border-color: var(--amber); }
+  .tl-item.danger::before { border-color: var(--red); }
+  .tl-item .tl-title { font-size: 11.5px; font-weight: 600; color: var(--text); }
+  .tl-item .tl-meta { margin-top: 2px; font-size: 10px; color: var(--text-3); }
+  .tl-item .tl-body { margin-top: 4px; font-size: 10.5px; color: var(--text-2); }
+
+  .code {
+    padding: 10px 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(4, 9, 17, 0.72);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.65;
+    color: #A9E9F7;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .code .cmt { color: var(--text-3); }
+  .code .key { color: #87E6B4; }
+  .code .str { color: #F6DD9B; }
+
+  .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+  .meta-item { min-width: 0; }
+  .meta-label { font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+  .meta-value { font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
+
+  .empty {
+    padding: 34px 18px;
+    text-align: center;
+    color: var(--text-3);
+  }
+  .empty .icon {
+    width: 38px; height: 38px;
+    margin: 0 auto 9px;
+    display: grid; place-items: center;
+    border: 1px dashed var(--line-soft);
+    border-radius: 12px;
+    color: var(--text-3);
+    font-size: 16px;
+  }
+  .empty strong { display: block; color: var(--text-2); font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+  .empty p { margin: 0; font-size: 10.5px; }
+
+  .divider { height: 1px; background: var(--line); margin: 12px 0; }
+  .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); display: inline-block; }
+
+  /* ===== Overview topology ===== */
+  .topo-card { padding-bottom: 10px; }
+  .topo-svg { width: 100%; height: auto; display: block; }
+  .topo-svg .site { rx: 12; }
+  .topo-svg .node { cursor: pointer; transition: filter 0.15s ease; }
+  .topo-svg .node:hover { filter: brightness(1.14); }
+  .topo-svg text { user-select: none; }
+
+  .attention-list { display: flex; flex-direction: column; gap: 7px; }
+  .attention-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.016);
+    cursor: pointer;
+  }
+  .attention-item:hover { border-color: var(--line-soft); background: rgba(255, 255, 255, 0.028); }
+  .attention-item .ai-main { flex: 1; min-width: 0; }
+  .attention-item .ai-title { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--text); }
+  .attention-item .ai-desc { margin-top: 2px; font-size: 10px; color: var(--text-3); line-height: 1.45; }
+  .attention-item .ai-time { font-size: 9.5px; color: var(--text-3); white-space: nowrap; }
+
+  /* ===== Assets ===== */
+  .fact-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .fact-chip {
+    padding: 1px 6px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(38, 59, 88, 0.65);
+    font-size: 9.5px;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+  .fact-chip.ok { color: var(--green); border-color: rgba(62, 213, 152, 0.2); background: rgba(62, 213, 152, 0.06); }
+  .fact-chip.warn { color: var(--amber); border-color: rgba(245, 185, 76, 0.2); background: rgba(245, 185, 76, 0.06); }
+  .table-dense td { padding-top: 8px; padding-bottom: 8px; }
+
+  .device-name { display: flex; align-items: center; gap: 7px; }
+  .device-name strong { font-size: 11.5px; color: var(--text); }
+  .device-role { font-size: 9.5px; color: var(--text-3); }
+
+  /* ===== Diagnosis workspace ===== */
+  .diag-workspace {
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr) 318px;
+    gap: 10px;
+    height: calc(100vh - 176px);
+    min-height: 610px;
+  }
+  .diag-panel {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, rgba(19, 34, 56, 0.74), rgba(12, 22, 38, 0.92));
+    overflow: hidden;
+  }
+  .diag-panel-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .diag-panel-title { font-size: 11.5px; font-weight: 680; color: var(--text); }
+  .session-search { padding: 10px 10px 6px; }
+  .session-search .field { width: 100%; }
+  .session-group-label {
+    padding: 8px 12px 4px;
+    font-size: 9px;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .session-list { flex: 1; overflow-y: auto; padding: 0 7px 10px; }
+  .session-item {
+    position: relative;
+    padding: 9px 10px 9px 12px;
+    margin: 2px 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .session-item:hover { background: rgba(255, 255, 255, 0.025); }
+  .session-item.active {
+    background: rgba(56, 211, 245, 0.07);
+    border-color: rgba(56, 211, 245, 0.18);
+  }
+  .session-item.active::before {
+    content: "";
+    position: absolute;
+    left: -8px; top: 11px; bottom: 11px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .session-q {
+    font-size: 11px;
+    line-height: 1.42;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .session-meta { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 9.5px; color: var(--text-3); }
+
+  .diag-main { background: rgba(10, 19, 34, 0.96); }
+  .diag-session-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(19, 34, 56, 0.42);
+  }
+  .diag-session-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .diag-session-title strong { font-size: 11.5px; }
+  .diag-session-meta { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-top: 1px; font-size: 9.5px; color: var(--text-3); }
+  .chat-scroll { flex: 1; overflow-y: auto; padding: 14px 16px 18px; }
+  .chat-scroll::-webkit-scrollbar, .session-list::-webkit-scrollbar, .diag-right::-webkit-scrollbar, .drawer-body::-webkit-scrollbar { width: 7px; }
+  .chat-scroll::-webkit-scrollbar-thumb, .session-list::-webkit-scrollbar-thumb, .diag-right::-webkit-scrollbar-thumb, .drawer-body::-webkit-scrollbar-thumb {
+    background: #263B58;
+    border-radius: 7px;
+  }
+  .chat-date { text-align: center; font-size: 9.5px; color: var(--text-3); margin: 0 0 12px; }
+  .msg-user {
+    max-width: 82%;
+    margin-left: auto;
+    padding: 9px 11px;
+    border: 1px solid rgba(56, 211, 245, 0.24);
+    border-radius: 10px 10px 3px 10px;
+    background: rgba(56, 211, 245, 0.09);
+    color: var(--text);
+    font-size: 11.5px;
+    line-height: 1.55;
+  }
+  .msg-user .msg-meta { margin-top: 4px; text-align: right; color: var(--text-3); font-size: 9px; }
+  .assistant-block { margin-top: 14px; }
+  .assistant-label { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; font-size: 9.5px; color: var(--text-3); }
+  .assistant-label .avatar { width: 18px; height: 18px; font-size: 8px; }
+  .tool-strip { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+  .tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 7px;
+    border: 1px dashed var(--line-soft);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.018);
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+  }
+  .tool-pill .ok { color: var(--green); font-family: var(--font); font-weight: 700; }
+  .tool-pill .bad { color: var(--red); font-family: var(--font); font-weight: 700; }
+  .answer-card {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(19, 34, 56, 0.58);
+    overflow: hidden;
+  }
+  .answer-card + .answer-card { margin-top: 9px; }
+  .answer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 11px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .answer-head strong { font-size: 11.5px; }
+  .answer-body { padding: 10px 11px; font-size: 11px; line-height: 1.62; color: var(--text-2); }
+  .answer-body strong { color: var(--text); font-weight: 620; }
+  .answer-body p { margin: 0 0 7px; }
+  .answer-body p:last-child { margin-bottom: 0; }
+  .answer-body ul, .answer-body ol { margin: 4px 0 0; padding-left: 17px; }
+  .answer-body li { margin: 3px 0; }
+  .answer-body code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(4, 9, 17, 0.7);
+    border: 1px solid var(--line);
+    color: #A9E9F7;
+    font-family: var(--mono);
+    font-size: 9.5px;
+  }
+  .evidence-list { display: flex; flex-direction: column; gap: 6px; }
+  .evidence-item {
+    padding: 8px 9px;
+    border: 1px solid rgba(38, 59, 88, 0.7);
+    border-left: 2px solid var(--accent);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .evidence-item.danger { border-left-color: var(--red); }
+  .evidence-item.warn { border-left-color: var(--amber); }
+  .evidence-item.ok { border-left-color: var(--green); }
+  .evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10px; color: var(--text-3); }
+  .evidence-title { margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--text); }
+  .evidence-body { margin-top: 2px; font-size: 10px; color: var(--text-2); line-height: 1.5; }
+  .suggestion-item {
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.016);
+  }
+  .suggestion-item + .suggestion-item { margin-top: 6px; }
+  .suggestion-item .sg-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text); font-weight: 600; }
+  .suggestion-item .sg-body { margin-top: 3px; font-size: 10.5px; color: var(--text-2); line-height: 1.5; }
+  .suggestion-actions { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+  .composer {
+    flex: 0 0 auto;
+    padding: 9px 11px 11px;
+    border-top: 1px solid var(--line);
+    background: rgba(13, 23, 39, 0.95);
+  }
+  .composer-row { display: flex; gap: 7px; align-items: flex-end; }
+  .composer textarea {
+    flex: 1;
+    min-height: 40px;
+    max-height: 92px;
+    resize: none;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(4, 9, 17, 0.62);
+    color: var(--text);
+    padding: 8px 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    outline: none;
+  }
+  .composer textarea:focus { border-color: rgba(56, 211, 245, 0.4); box-shadow: 0 0 0 3px rgba(56, 211, 245, 0.075); }
+  .composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+  .composer-hint { font-size: 9px; color: var(--text-3); }
+
+  .diag-right { background: rgba(10, 19, 34, 0.92); overflow-y: auto; }
+  .diag-right-inner { padding: 11px 11px 16px; }
+  .context-tabs { margin-bottom: 8px; }
+  .context-tabs .seg { flex: 1; justify-content: center; padding: 0 6px; }
+  .mini-topo {
+    position: relative;
+    height: 132px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background:
+      linear-gradient(rgba(56, 211, 245, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 211, 245, 0.035) 1px, transparent 1px),
+      rgba(4, 9, 17, 0.55);
+    background-size: 22px 22px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .mini-topo svg { width: 100%; height: 100%; display: block; }
+  .context-card {
+    padding: 8px 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.014);
+  }
+  .context-card + .context-card { margin-top: 6px; }
+  .context-card .cc-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10px; color: var(--text-3); }
+  .context-card .cc-title { margin-top: 2px; font-size: 10.8px; color: var(--text); font-weight: 600; }
+  .context-card .cc-body { margin-top: 2px; font-size: 9.8px; color: var(--text-2); line-height: 1.5; }
+  .context-tab-panel { display: none; }
+  .context-tab-panel.active { display: block; }
+  .next-action { margin-top: 8px; padding: 10px; border: 1px solid rgba(56, 211, 245, 0.18); border-radius: 9px; background: rgba(56, 211, 245, 0.045); }
+  .next-action .na-title { font-size: 11px; font-weight: 650; color: var(--text); }
+  .next-action .na-desc { margin-top: 2px; font-size: 9.7px; color: var(--text-3); line-height: 1.5; }
+
+  /* ===== Changes ===== */
+  .change-workspace { display: grid; grid-template-columns: 332px minmax(0, 1fr); gap: 10px; align-items: start; }
+  .change-list-panel { position: sticky; top: 0; }
+  .change-list { display: flex; flex-direction: column; gap: 6px; }
+  .change-item {
+    position: relative;
+    padding: 10px 11px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.014);
+    cursor: pointer;
+  }
+  .change-item:hover { border-color: var(--line-soft); background: rgba(255, 255, 255, 0.025); }
+  .change-item.active { border-color: rgba(56, 211, 245, 0.24); background: rgba(56, 211, 245, 0.05); }
+  .change-item .ci-top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+  .change-item .ci-id { font-family: var(--mono); font-size: 9.5px; color: var(--text-3); }
+  .change-item .ci-title { margin-top: 4px; font-size: 11.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
+  .change-item .ci-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 5px; font-size: 9.5px; color: var(--text-3); }
+  .change-detail { display: flex; flex-direction: column; gap: 10px; }
+  .change-hero { padding: 15px 16px; }
+  .change-hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .change-hero h3 { margin: 0; font-size: 17px; line-height: 1.3; letter-spacing: -0.2px; }
+  .change-hero .hero-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .change-hero .hero-link { margin-top: 8px; font-size: 10.5px; color: var(--text-3); }
+  .change-hero .hero-link a { color: var(--accent); }
+  .stepper { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; margin-top: 15px; }
+  .step-node { position: relative; padding: 16px 4px 0; text-align: center; }
+  .step-node::before {
+    content: "";
+    position: absolute;
+    top: 6px; left: 50%; right: -50%;
+    height: 1px;
+    background: var(--line);
+  }
+  .step-node:last-child::before { display: none; }
+  .step-node .sn-dot {
+    position: absolute;
+    top: 1px; left: 50%;
+    width: 11px; height: 11px;
+    margin-left: -5.5px;
+    border-radius: 50%;
+    border: 2px solid var(--line-soft);
+    background: var(--panel);
+  }
+  .step-node.done::before { background: rgba(62, 213, 152, 0.4); }
+  .step-node.done .sn-dot { border-color: var(--green); background: var(--green); box-shadow: 0 0 0 3px rgba(62, 213, 152, 0.08); }
+  .step-node.current .sn-dot { border-color: var(--accent); background: var(--panel); box-shadow: 0 0 0 3px rgba(56, 211, 245, 0.10); }
+  .step-node.pending .sn-dot { border-color: #3C526F; }
+  .step-node .sn-label { font-size: 9.5px; color: var(--text-3); }
+  .step-node.done .sn-label { color: var(--text-2); }
+  .step-node.current .sn-label { color: var(--accent); font-weight: 650; }
+  .change-columns { display: grid; grid-template-columns: minmax(0, 1.32fr) minmax(280px, 0.86fr); gap: 10px; }
+  .step-list { display: flex; flex-direction: column; gap: 7px; }
+  .step-card {
+    display: flex;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.014);
+  }
+  .step-card .step-no {
+    width: 20px; height: 20px;
+    flex: 0 0 20px;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--line-soft);
+    color: var(--text-3);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .step-card .step-main { flex: 1; min-width: 0; }
+  .step-card .step-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; color: var(--text); }
+  .step-card .step-desc { margin-top: 2px; font-size: 10px; color: var(--text-3); line-height: 1.5; }
+  .step-card .step-cmd { margin-top: 6px; }
+  .side-card { padding: 12px; }
+  .side-card + .side-card { margin-top: 8px; }
+  .approval-box { display: flex; gap: 6px; }
+  .approval-box .field { flex: 1; min-width: 0; }
+  .recheck-compare { width: 100%; font-size: 10px; }
+  .recheck-compare td, .recheck-compare th { padding: 6px 6px; font-size: 10px; }
+  .footer-action-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(13, 23, 39, 0.96);
+    backdrop-filter: blur(10px);
+  }
+
+  /* ===== Knowledge & evaluation ===== */
+  .kb-layout { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(300px, 0.82fr); gap: 10px; align-items: start; }
+  .article-title { max-width: 430px; color: var(--text); font-weight: 600; line-height: 1.45; }
+  .article-id { font-family: var(--mono); font-size: 9.5px; color: var(--text-3); }
+  .kb-preview { position: sticky; top: 0; }
+  .kb-preview .preview-title { margin: 4px 0 7px; font-size: 13px; font-weight: 650; line-height: 1.45; }
+  .kb-preview .preview-body { font-size: 10.5px; color: var(--text-2); line-height: 1.65; }
+  .kb-preview .preview-body p { margin: 0 0 8px; }
+  .kb-preview .preview-body code { color: #A9E9F7; font-family: var(--mono); font-size: 9.5px; }
+  .index-mini { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .index-mini .im-item { padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, 0.014); }
+  .index-mini .im-label { font-size: 9px; color: var(--text-3); }
+  .index-mini .im-value { margin-top: 2px; font-size: 11px; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+
+  .eval-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 10px; }
+  .eval-kpi { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, 0.014); }
+  .eval-kpi .ek-label { font-size: 9.5px; color: var(--text-3); }
+  .eval-kpi .ek-values { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; }
+  .eval-kpi .ek-main { font-size: 20px; font-weight: 750; letter-spacing: -0.5px; color: var(--accent); }
+  .eval-kpi .ek-sub { font-size: 10px; color: var(--text-3); }
+  .eval-kpi .ek-delta { margin-top: 2px; font-size: 9.5px; color: var(--green); }
+  .eval-kpi .ek-delta.down { color: var(--amber); }
+  .chart-card { padding: 13px 14px; }
+  .chart-legend { display: flex; gap: 12px; align-items: center; font-size: 9.5px; color: var(--text-3); }
+  .legend-key { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+  .chart-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) 50px; gap: 9px; align-items: center; margin: 9px 0; }
+  .chart-label { font-size: 10px; color: var(--text-2); text-align: right; }
+  .chart-bars { display: flex; flex-direction: column; gap: 3px; }
+  .bar-track { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.035); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #38D3F5, #2B9CC9); }
+  .bar-fill.alt { background: linear-gradient(90deg, #8193AB, #62758D); }
+  .chart-value { font-size: 10px; color: var(--text-3); font-family: var(--mono); }
+  .case-result { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; white-space: nowrap; }
+
+  /* ===== Governance ===== */
+  .health-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 10px; }
+  .health-item { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, 0.014); }
+  .health-item .hi-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10px; color: var(--text-3); }
+  .health-item .hi-value { margin-top: 4px; font-size: 12px; font-weight: 650; color: var(--text); }
+  .health-item .hi-meta { margin-top: 2px; font-size: 9.5px; color: var(--text-3); }
+  .role-table td:first-child { color: var(--text); font-weight: 600; }
+  .role-check { color: var(--green); font-weight: 700; }
+  .role-deny { color: var(--text-3); }
+  .policy-row { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, 0.014); }
+  .policy-row + .policy-row { margin-top: 7px; }
+  .policy-icon { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-dim); color: var(--accent); font-size: 10px; font-weight: 700; }
+  .policy-main { flex: 1; min-width: 0; }
+  .policy-title { font-size: 10.8px; color: var(--text); font-weight: 600; }
+  .policy-desc { margin-top: 2px; font-size: 9.8px; color: var(--text-3); line-height: 1.45; }
+
+  /* ===== Drawers / modals ===== */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background: rgba(2, 6, 12, 0.62);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed;
+    z-index: 90;
+    top: 0; right: 0; bottom: 0;
+    width: min(520px, calc(100vw - 24px));
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, #112036 0%, #0B1627 100%);
+    border-left: 1px solid var(--line-soft);
+    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.4);
+    transform: translateX(102%);
+    transition: transform 0.2s ease;
+  }
+  .drawer.show { transform: none; }
+  .drawer-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 17px 18px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .drawer-title { font-size: 16px; font-weight: 700; letter-spacing: -0.2px; }
+  .drawer-sub { margin-top: 3px; font-size: 10.5px; color: var(--text-3); }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 16px 18px 26px; }
+  .drawer-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; background: rgba(7, 13, 24, 0.4); }
+  .close-btn {
+    width: 28px; height: 28px;
+    flex: 0 0 28px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .close-btn:hover { color: var(--text); border-color: var(--line-soft); }
+
+  .modal-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(2, 6, 12, 0.68);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.16s ease;
+  }
+  .modal-mask.show { opacity: 1; pointer-events: auto; }
+  .modal {
+    width: min(520px, 100%);
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    border: 1px solid var(--line-soft);
+    border-radius: 14px;
+    background: linear-gradient(180deg, #122139, #0C1728);
+    box-shadow: var(--shadow);
+  }
+  .modal-head { padding: 16px 18px 13px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .modal-head h3 { margin: 0; font-size: 15px; }
+  .modal-body { padding: 16px 18px; }
+  .modal-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; }
+
+  .toast {
+    position: fixed;
+    right: 20px; bottom: 20px;
+    z-index: 120;
+    max-width: 340px;
+    padding: 10px 13px;
+    border: 1px solid rgba(56, 211, 245, 0.28);
+    border-radius: 9px;
+    background: rgba(19, 34, 56, 0.97);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
+    color: var(--text);
+    font-size: 11.5px;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+  .toast.show { opacity: 1; transform: none; }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 1240px) {
+    :root { --sidebar: 210px; }
+    .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .split-main { grid-template-columns: 1fr; }
+    .change-workspace, .kb-layout { grid-template-columns: 1fr; }
+    .change-list-panel, .kb-preview { position: static; }
+    .change-columns { grid-template-columns: 1fr; }
+    .eval-kpis, .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .diag-workspace { grid-template-columns: 220px minmax(0, 1fr); height: auto; min-height: 0; }
+    .diag-right { grid-column: 1 / -1; max-height: 380px; }
+  }
+  @media (max-width: 980px) {
+    :root { --sidebar: 72px; }
+    .brand { justify-content: center; padding: 16px 10px; }
+    .brand-copy, .nav-label, .nav-text, .nav-badge, .sidebar-foot { display: none; }
+    .nav-item { justify-content: center; padding: 9px 0; }
+    .nav-item.active::before { left: -10px; }
+    .global-search { display: none; }
+    .cols-3, .cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .diag-workspace { grid-template-columns: 1fr; }
+    .diag-panel:first-child { max-height: 250px; }
+    .diag-main { min-height: 660px; }
+    .diag-right { max-height: none; }
+    .eval-kpis, .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar {
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      width: 236px;
+      transform: translateX(-101%);
+      transition: transform 0.2s ease;
+      box-shadow: 18px 0 40px rgba(0, 0, 0, 0.4);
+    }
+    .sidebar.open { transform: none; }
+    .sidebar .brand { justify-content: flex-start; padding: 18px; }
+    .sidebar .brand-copy, .sidebar .nav-label, .sidebar .nav-text, .sidebar .nav-badge, .sidebar .sidebar-foot { display: block; }
+    .sidebar .nav-item { justify-content: flex-start; padding: 8px 10px; }
+    .sidebar-foot { display: block; }
+    .menu-btn { display: grid; place-items: center; }
+    .topbar { padding: 0 14px; }
+    .freshness { display: none; }
+    .user-chip, .design-badge { display: none; }
+    .topbar-left { flex: 1; min-width: 0; }
+    .topbar-right { flex-shrink: 0; gap: 6px; }
+    .content { padding: 16px 14px 34px; }
+    .page-head { flex-direction: column; gap: 10px; }
+    .page-head > div { min-width: 0; width: 100%; }
+    .page-sub { max-width: 100%; overflow-wrap: anywhere; }
+    .actions { justify-content: flex-start; }
+    .kpi-grid, .cols-2, .cols-3, .cols-4, .meta-grid { grid-template-columns: 1fr; }
+    .eval-kpis, .health-grid { grid-template-columns: 1fr; }
+    .page-title { font-size: 20px; }
+    .diag-main { min-height: 620px; }
+    .diag-session-head { align-items: flex-start; flex-direction: column; }
+    .stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; }
+    .chart-row { grid-template-columns: 82px minmax(0, 1fr) 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">N</div>
+      <div class="brand-copy">
+        <div class="brand-name">NetOps Console</div>
+        <div class="brand-sub">网络智能运维台 · 设计稿 v2.0</div>
+      </div>
+    </div>
+    <nav class="nav" id="mainNav">
+      <div class="nav-group">
+        <div class="nav-label">工作台</div>
+        <div class="nav-item active" data-page="overview">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg></span>
+          <span class="nav-text">总览</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">运行</div>
+        <div class="nav-item" data-page="assets">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></span>
+          <span class="nav-text">资产与采集</span>
+          <span class="nav-badge accent">9</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">智能</div>
+        <div class="nav-item" data-page="diagnosis">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4.2 3 5.4V19h8v-3.6c1.8-1.2 3-3 3-5.4a7 7 0 0 0-7-7Z"/><path d="M9 22h6M9.5 10.5l1.7 1.7 3.3-3.4"/></svg></span>
+          <span class="nav-text">诊断中心</span>
+          <span class="nav-badge">1</span>
+        </div>
+        <div class="nav-item" data-page="changes">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/><circle cx="18" cy="17" r="2"/></svg></span>
+          <span class="nav-text">变更与复测</span>
+          <span class="nav-badge warn">1</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">治理</div>
+        <div class="nav-item" data-page="knowledge">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v18H7.5A2.5 2.5 0 0 0 5 22V4.5Z"/><path d="M5 19.5A2.5 2.5 0 0 1 7.5 17H19"/></svg></span>
+          <span class="nav-text">知识与评测</span>
+          <span class="nav-badge">26</span>
+        </div>
+        <div class="nav-item" data-page="governance">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3 7.4-8 9-5-1.6-8-4.5-8-9V6l8-3Z"/><path d="M9.5 12.2l1.7 1.7 3.4-3.5"/></svg></span>
+          <span class="nav-text">审计与设置</span>
+        </div>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="side-health"><span class="status-dot ok"></span>采集服务 · 运行中</div>
+      <div class="side-note">EVE-NG 实验网<br>单进程 · 只读自动化</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="menu-btn" onclick="toggleSidebar()" aria-label="打开导航">☰</button>
+        <div class="crumb">实验网 / <strong id="crumbPage">总览</strong></div>
+        <span class="tag accent square design-badge">设计稿 · 示例数据</span>
+      </div>
+      <div class="topbar-right">
+        <label class="global-search">
+          <span class="tiny">⌕</span>
+          <input placeholder="搜索设备、诊断、变更、知识…" onkeydown="if(event.key==='Enter')toast('全局搜索为设计演示')" />
+          <span class="kbd">⌘ K</span>
+        </label>
+        <span class="freshness"><span class="status-dot warn"></span>最近采集 10-20 03:18</span>
+        <button class="btn sm" onclick="toast('已创建采集任务（设计演示）')">立即采集</button>
+        <div class="user-chip">
+          <div class="avatar">运</div>
+          <div>
+            <div class="u-name">运维管理员</div>
+            <div class="u-role">admin · 实验环境</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+
+      <!-- ================= 总览 ================= -->
+      <section class="page active" id="page-overview">
+        <div class="page-head">
+          <div>
+            <h2 class="page-title">网络运行总览</h2>
+            <div class="page-sub">最近一次已发布采集 <span class="mono">run_534d8cb9…</span> · 2026-10-20 03:18 · 部分成功。所有当前状态只引用已发布事实。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="go('assets')">查看采集批次</button>
+            <button class="btn primary" onclick="go('diagnosis')">发起诊断</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot ok"></span>设备可达</div>
+            <div class="kpi-value">6 <small>/ 9</small></div>
+            <div class="kpi-meta"><strong>2 不可达</strong> · 1 未采集</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot warn"></span>最新采集</div>
+            <div class="kpi-value warn">部分成功</div>
+            <div class="kpi-meta">6 成功 · 2 失败 · 1 跳过 · 41s</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot accent"></span>知识索引</div>
+            <div class="kpi-value accent">Ready</div>
+            <div class="kpi-meta">26 篇文章 · bge-small-zh-v1.5</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot danger"></span>需要处理</div>
+            <div class="kpi-value danger">2</div>
+            <div class="kpi-meta">连通性异常 · 0 待审批变更</div>
+          </div>
+        </div>
+
+        <div class="split-main">
+          <div class="card topo-card">
+            <div class="card-head">
+              <div class="card-title"><span class="dot"></span>网络拓扑 <span class="tag plain square">最新快照</span></div>
+              <div class="row">
+                <span class="status-text ok"><span class="status-dot ok"></span>可达</span>
+                <span class="status-text warn"><span class="status-dot warn"></span>异常</span>
+                <span class="status-text danger"><span class="status-dot danger"></span>不可达</span>
+                <span class="status-text unknown"><span class="status-dot unknown"></span>未采集</span>
+              </div>
+            </div>
+            <svg class="topo-svg" viewBox="0 0 900 292" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+              <defs>
+                <linearGradient id="hqFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#38D3F5" stop-opacity="0.075"/>
+                  <stop offset="1" stop-color="#38D3F5" stop-opacity="0.015"/>
+                </linearGradient>
+                <linearGradient id="brAFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#F5B94C" stop-opacity="0.07"/>
+                  <stop offset="1" stop-color="#F5B94C" stop-opacity="0.012"/>
+                </linearGradient>
+                <linearGradient id="brBFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#B49CF8" stop-opacity="0.06"/>
+                  <stop offset="1" stop-color="#B49CF8" stop-opacity="0.012"/>
+                </linearGradient>
+              </defs>
+
+              <rect class="site" x="8" y="8" width="282" height="274" fill="url(#hqFill)" stroke="#1E3049"/>
+              <rect class="site" x="306" y="8" width="282" height="274" fill="url(#brAFill)" stroke="#1E3049"/>
+              <rect class="site" x="604" y="8" width="288" height="274" fill="url(#brBFill)" stroke="#1E3049"/>
+              <text x="24" y="29" fill="#A9B8CD" font-size="11" font-weight="600">总部 · HQ</text>
+              <text x="322" y="29" fill="#A9B8CD" font-size="11" font-weight="600">分支 A</text>
+              <text x="620" y="29" fill="#A9B8CD" font-size="11" font-weight="600">分支 B</text>
+              <text x="252" y="29" fill="#6F829C" font-size="9">10.1.0.0/16</text>
+              <text x="550" y="29" fill="#6F829C" font-size="9">10.2.0.0/16</text>
+              <text x="848" y="29" fill="#6F829C" font-size="9">10.3.0.0/16</text>
+
+              <!-- links -->
+              <path d="M134 113 C 200 113, 252 113, 346 113" fill="none" stroke="#3ED598" stroke-opacity="0.58" stroke-width="1.8"/>
+              <path d="M134 113 C 300 50, 560 50, 706 113" fill="none" stroke="#3ED598" stroke-opacity="0.45" stroke-width="1.8"/>
+              <path d="M96 137 L96 194" fill="none" stroke="#38D3F5" stroke-opacity="0.42" stroke-width="1.6"/>
+              <path d="M134 130 L228 130" fill="none" stroke="#61738C" stroke-opacity="0.42" stroke-width="1.5" stroke-dasharray="4 3"/>
+              <path d="M417 137 L417 194" fill="none" stroke="#F5B94C" stroke-opacity="0.5" stroke-width="1.6" stroke-dasharray="4 3"/>
+              <path d="M458 130 L548 130" fill="none" stroke="#F2777A" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="4 3"/>
+              <path d="M777 137 L777 194" fill="none" stroke="#38D3F5" stroke-opacity="0.38" stroke-width="1.6"/>
+              <path d="M818 130 L854 130" fill="none" stroke="#F2777A" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="4 3"/>
+              <text x="222" y="105" fill="#6F829C" font-size="8.5">WAN</text>
+              <text x="392" y="172" fill="#F5B94C" font-size="8.5">Gi0/1 ↔ Gi0/0</text>
+              <text x="534" y="122" fill="#F2777A" font-size="8.5">ping timeout</text>
+
+              <!-- HQ nodes -->
+              <g class="node" onclick="openDevice('HQ-R1')">
+                <rect x="36" y="82" width="98" height="55" rx="8" fill="#132238" stroke="#3ED598" stroke-opacity="0.4"/>
+                <circle cx="51" cy="98" r="3" fill="#3ED598"/>
+                <text x="60" y="101" fill="#E7EEF8" font-size="11" font-weight="600">HQ-R1</text>
+                <text x="50" y="116" fill="#6F829C" font-size="8.5">核心路由器</text>
+                <text x="50" y="128" fill="#6F829C" font-size="8">192.168.249.11</text>
+              </g>
+              <g class="node" onclick="openDevice('HQ-SW1')">
+                <rect x="36" y="194" width="120" height="55" rx="8" fill="#132238" stroke="#3ED598" stroke-opacity="0.4"/>
+                <circle cx="51" cy="210" r="3" fill="#3ED598"/>
+                <text x="60" y="213" fill="#E7EEF8" font-size="11" font-weight="600">HQ-SW1</text>
+                <text x="50" y="228" fill="#6F829C" font-size="8.5">核心交换机 · VLAN 10/20</text>
+                <text x="50" y="240" fill="#6F829C" font-size="8">192.168.249.14</text>
+              </g>
+              <g class="node" onclick="openDevice('HQ-SRV')">
+                <rect x="172" y="82" width="104" height="55" rx="8" fill="#132238" stroke="#61738C" stroke-opacity="0.45"/>
+                <circle cx="187" cy="98" r="3" fill="#61738C"/>
+                <text x="196" y="101" fill="#E7EEF8" font-size="11" font-weight="600">HQ-SRV</text>
+                <text x="186" y="116" fill="#6F829C" font-size="8.5">总部服务器 · 未采集</text>
+                <text x="186" y="128" fill="#6F829C" font-size="8">192.168.10.100</text>
+              </g>
+
+              <!-- BR-A nodes -->
+              <g class="node" onclick="openDevice('BR-A-R2')">
+                <rect x="346" y="82" width="112" height="55" rx="8" fill="#132238" stroke="#3ED598" stroke-opacity="0.4"/>
+                <circle cx="361" cy="98" r="3" fill="#3ED598"/>
+                <text x="370" y="101" fill="#E7EEF8" font-size="11" font-weight="600">BR-A-R2</text>
+                <text x="360" y="116" fill="#6F829C" font-size="8.5">分支 A 路由器</text>
+                <text x="360" y="128" fill="#6F829C" font-size="8">192.168.249.12</text>
+              </g>
+              <g class="node" onclick="openDevice('BR-A-SW2')">
+                <rect x="346" y="194" width="142" height="55" rx="8" fill="#132238" stroke="#F5B94C" stroke-opacity="0.42"/>
+                <circle cx="361" cy="210" r="3" fill="#F5B94C"/>
+                <text x="370" y="213" fill="#E7EEF8" font-size="11" font-weight="600">BR-A-SW2</text>
+                <text x="360" y="228" fill="#6F829C" font-size="8.5">接入交换机 · Gi0/0 down</text>
+                <text x="360" y="240" fill="#6F829C" font-size="8">192.168.249.15</text>
+              </g>
+              <g class="node" onclick="openDevice('BR-A-PC')">
+                <rect x="512" y="82" width="60" height="55" rx="8" fill="#132238" stroke="#F2777A" stroke-opacity="0.5"/>
+                <circle cx="526" cy="98" r="3" fill="#F2777A"/>
+                <text x="535" y="101" fill="#E7EEF8" font-size="10" font-weight="600">BR-A-PC</text>
+                <text x="524" y="116" fill="#6F829C" font-size="8.5">测试终端</text>
+                <text x="524" y="128" fill="#F2777A" font-size="8">不可达</text>
+              </g>
+
+              <!-- BR-B nodes -->
+              <g class="node" onclick="openDevice('BR-B-R3')">
+                <rect x="706" y="82" width="112" height="55" rx="8" fill="#132238" stroke="#3ED598" stroke-opacity="0.4"/>
+                <circle cx="721" cy="98" r="3" fill="#3ED598"/>
+                <text x="730" y="101" fill="#E7EEF8" font-size="11" font-weight="600">BR-B-R3</text>
+                <text x="720" y="116" fill="#6F829C" font-size="8.5">分支 B 路由器</text>
+                <text x="720" y="128" fill="#6F829C" font-size="8">192.168.249.13</text>
+              </g>
+              <g class="node" onclick="openDevice('BR-B-SW3')">
+                <rect x="706" y="194" width="142" height="55" rx="8" fill="#132238" stroke="#3ED598" stroke-opacity="0.4"/>
+                <circle cx="721" cy="210" r="3" fill="#3ED598"/>
+                <text x="730" y="213" fill="#E7EEF8" font-size="11" font-weight="600">BR-B-SW3</text>
+                <text x="720" y="228" fill="#6F829C" font-size="8.5">接入交换机 · VLAN 10</text>
+                <text x="720" y="240" fill="#6F829C" font-size="8">192.168.249.16</text>
+              </g>
+              <g class="node" onclick="openDevice('BR-B-PC')">
+                <rect x="812" y="82" width="62" height="55" rx="8" fill="#132238" stroke="#F2777A" stroke-opacity="0.5"/>
+                <circle cx="826" cy="98" r="3" fill="#F2777A"/>
+                <text x="835" y="101" fill="#E7EEF8" font-size="9.5" font-weight="600">BR-B-PC</text>
+                <text x="824" y="116" fill="#6F829C" font-size="8.5">测试终端</text>
+                <text x="824" y="128" fill="#F2777A" font-size="8">不可达</text>
+              </g>
+            </svg>
+            <div class="table-note">
+              <span>拓扑由 CDP / 接口状态生成；节点颜色代表当前采集事实。</span>
+              <button class="btn sm ghost" onclick="go('assets'); switchAssetTab('snapshots')">查看快照</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title"><span class="dot" style="background:var(--red);box-shadow:0 0 9px rgba(242,119,122,.55)"></span>需要处理 <span class="tag danger">2</span></div>
+              <button class="btn sm ghost" onclick="go('assets')">全部</button>
+            </div>
+            <div class="attention-list">
+              <div class="attention-item" onclick="openCollection('run_534d8cb9c73c484fb69c16822f916f50')">
+                <span class="status-dot danger" style="margin-top:5px"></span>
+                <div class="ai-main">
+                  <div class="ai-title">BR-A-PC 连通性失败 <span class="tag danger">失败</span></div>
+                  <div class="ai-desc">源终端 ping HQ-SRV 超时 · 10s</div>
+                </div>
+                <div class="ai-time">03:18</div>
+              </div>
+              <div class="attention-item" onclick="openCollection('run_534d8cb9c73c484fb69c16822f916f50')">
+                <span class="status-dot danger" style="margin-top:5px"></span>
+                <div class="ai-main">
+                  <div class="ai-title">BR-B-PC 连通性失败 <span class="tag danger">失败</span></div>
+                  <div class="ai-desc">源终端 ping HQ-SRV 超时 · 10s</div>
+                </div>
+                <div class="ai-time">03:18</div>
+              </div>
+              <div class="attention-item" onclick="openDevice('HQ-SRV')">
+                <span class="status-dot unknown" style="margin-top:5px"></span>
+                <div class="ai-main">
+                  <div class="ai-title">HQ-SRV 未采集 <span class="tag plain">跳过</span></div>
+                  <div class="ai-desc">无管理通道或凭据未配置，不代表设备故障</div>
+                </div>
+                <div class="ai-time">03:18</div>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="between mb-8">
+              <div class="card-title" style="font-size:11.5px">最近活动</div>
+              <span class="dim tiny">今天</span>
+            </div>
+            <div class="timeline">
+              <div class="tl-item ok">
+                <div class="tl-title">知识索引发布</div>
+                <div class="tl-meta">03:27 · <span class="mono">kbindex_f7a5…</span></div>
+              </div>
+              <div class="tl-item warn">
+                <div class="tl-title">采集批次部分成功</div>
+                <div class="tl-meta">03:18 · 6 成功 / 2 失败 / 1 跳过</div>
+              </div>
+              <div class="tl-item">
+                <div class="tl-title">数据库迁移 v5 完成</div>
+                <div class="tl-meta">02:57 · 旧库兼容视图保留</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mt-12 flush">
+          <div class="card-head" style="padding:14px 16px 0;margin-bottom:10px">
+            <div class="card-title"><span class="dot"></span>最近采集批次</div>
+            <button class="btn sm ghost" onclick="go('assets'); switchAssetTab('batches')">全部批次</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>批次</th><th>触发</th><th>范围</th><th>结果</th><th>耗时</th><th>发布时间</th><th style="text-align:right">操作</th></tr></thead>
+              <tbody>
+                <tr class="clickable" onclick="openCollection('run_534d8cb9c73c484fb69c16822f916f50')">
+                  <td><span class="mono primary-text">run_534d8cb9…</span><span class="sub-text">启动采集 · 已发布</span></td>
+                  <td><span class="tag accent">启动</span></td>
+                  <td>全网 · 9 台</td>
+                  <td><span class="tag warn">6 成功 · 2 失败 · 1 跳过</span></td>
+                  <td class="mono">41s</td>
+                  <td class="mono">10-20 03:18</td>
+                  <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                </tr>
+                <tr class="clickable" onclick="toast('打开单设备采集批次（设计演示）')">
+                  <td><span class="mono primary-text">run_cbaab20e…</span><span class="sub-text">手动 · 已发布</span></td>
+                  <td><span class="tag">手动</span></td>
+                  <td>HQ-R1</td>
+                  <td><span class="tag ok">全部成功</span></td>
+                  <td class="mono">3s</td>
+                  <td class="mono">10-20 02:37</td>
+                  <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                </tr>
+                <tr class="clickable" onclick="toast('打开失败批次（设计演示）')">
+                  <td><span class="mono primary-text">run_99129140…</span><span class="sub-text">手动 · 已发布</span></td>
+                  <td><span class="tag">手动</span></td>
+                  <td>HQ-R1</td>
+                  <td><span class="tag danger">失败</span></td>
+                  <td class="mono">11s</td>
+                  <td class="mono">10-20 02:37</td>
+                  <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                </tr>
+                <tr class="clickable" onclick="toast('打开迁移批次（设计演示）')">
+                  <td><span class="mono primary-text">run_0739f60d…</span><span class="sub-text">迁移 · 已发布</span></td>
+                  <td><span class="tag plain">迁移</span></td>
+                  <td>全网 · 8 台</td>
+                  <td><span class="tag ok">全部成功</span></td>
+                  <td class="mono">75s</td>
+                  <td class="mono">10-20 00:57</td>
+                  <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 资产与采集 ================= -->
+      <section class="page" id="page-assets">
+        <div class="page-head">
+          <div>
+            <h2 class="page-title">资产与采集</h2>
+            <div class="page-sub">设备台账与采集事实放在同一条链路里：先看设备，再追溯批次、采集项和状态观测。当前状态只取已发布批次。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="toast('导出资产清单（设计演示）')">导出资产</button>
+            <button class="btn primary" onclick="toast('已创建采集任务（设计演示）')">立即采集</button>
+          </div>
+        </div>
+
+        <div class="tabs" id="assetTabs">
+          <button class="tab active" data-asset-tab="devices" onclick="switchAssetTab('devices')">设备台账 <span class="tag plain">9</span></button>
+          <button class="tab" data-asset-tab="batches" onclick="switchAssetTab('batches')">采集批次 <span class="tag plain">4</span></button>
+          <button class="tab" data-asset-tab="snapshots" onclick="switchAssetTab('snapshots')">拓扑快照 <span class="tag plain">3</span></button>
+        </div>
+
+        <div class="tab-panel active" data-asset-panel="devices">
+          <div class="filter-bar">
+            <input class="field field-lg" placeholder="搜索设备名 / IP / 型号…" oninput="filterDevices(this.value)" />
+            <select class="select" onchange="filterDevices()">
+              <option value="">全部站点</option><option>总部</option><option>分支A</option><option>分支B</option>
+            </select>
+            <select class="select" onchange="filterDevices()">
+              <option value="">全部角色</option><option>路由器</option><option>交换机</option><option>终端</option>
+            </select>
+            <select class="select" onchange="filterDevices()">
+              <option value="">全部状态</option><option>可达</option><option>不可达</option><option>未采集</option>
+            </select>
+            <span class="result-count" id="deviceCount">共 9 台设备</span>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap">
+              <table class="table-dense" id="deviceTable">
+                <thead><tr><th>状态</th><th>设备</th><th>站点</th><th>管理地址</th><th>平台</th><th>最近采集</th><th>当前事实</th><th style="text-align:right">操作</th></tr></thead>
+                <tbody>
+                  <tr class="clickable" onclick="openDevice('BR-A-PC')">
+                    <td><span class="status-text danger"><span class="status-dot danger"></span>不可达</span></td>
+                    <td><div class="device-name"><strong>BR-A-PC</strong></div><div class="device-role">分支A测试终端</div></td>
+                    <td>分支A</td><td class="mono">192.168.20.100</td><td>VPCS / Linux</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip warn">ping 超时</span><span class="fact-chip">SSH 不可用</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('BR-A-R2')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>BR-A-R2</strong></div><div class="device-role">分支A路由器</div></td>
+                    <td>分支A</td><td class="mono">192.168.249.12</td><td>Cisco IOSv</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 1/2 UP</span><span class="fact-chip">路由 18</span><span class="fact-chip warn">Gi0/1 DOWN</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('BR-A-SW2')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>BR-A-SW2</strong></div><div class="device-role">分支A交换机</div></td>
+                    <td>分支A</td><td class="mono">192.168.249.15</td><td>Cisco IOSvL2</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 1/2 UP</span><span class="fact-chip">VLAN 10</span><span class="fact-chip warn">Gi0/0 DOWN</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('BR-B-PC')">
+                    <td><span class="status-text danger"><span class="status-dot danger"></span>不可达</span></td>
+                    <td><div class="device-name"><strong>BR-B-PC</strong></div><div class="device-role">分支B测试终端</div></td>
+                    <td>分支B</td><td class="mono">192.168.30.100</td><td>VPCS / Linux</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip warn">ping 超时</span><span class="fact-chip">SSH 不可用</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('BR-B-R3')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>BR-B-R3</strong></div><div class="device-role">分支B路由器</div></td>
+                    <td>分支B</td><td class="mono">192.168.249.13</td><td>Cisco IOSv</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 2/2 UP</span><span class="fact-chip">路由 18</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('BR-B-SW3')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>BR-B-SW3</strong></div><div class="device-role">分支B交换机</div></td>
+                    <td>分支B</td><td class="mono">192.168.249.16</td><td>Cisco IOSvL2</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 2/2 UP</span><span class="fact-chip">VLAN 10</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('HQ-R1')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>HQ-R1</strong></div><div class="device-role">总部核心路由器</div></td>
+                    <td>总部</td><td class="mono">192.168.249.11</td><td>Cisco IOSv</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 3/3 UP</span><span class="fact-chip">路由 24</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('HQ-SRV')">
+                    <td><span class="status-text unknown"><span class="status-dot unknown"></span>未采集</span></td>
+                    <td><div class="device-name"><strong>HQ-SRV</strong></div><div class="device-role">总部服务器终端</div></td>
+                    <td>总部</td><td class="mono">192.168.10.100</td><td>VPCS / Linux</td><td class="mono">—</td>
+                    <td><div class="fact-chips"><span class="fact-chip">无管理通道</span><span class="fact-chip">跳过</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="openDevice('HQ-SW1')">
+                    <td><span class="status-text ok"><span class="status-dot ok"></span>可达</span></td>
+                    <td><div class="device-name"><strong>HQ-SW1</strong></div><div class="device-role">总部核心交换机</div></td>
+                    <td>总部</td><td class="mono">192.168.249.14</td><td>Cisco IOSvL2</td><td class="mono">03:18</td>
+                    <td><div class="fact-chips"><span class="fact-chip ok">接口 3/3 UP</span><span class="fact-chip">VLAN 10/20</span></div></td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-note"><span>“当前事实”来自最近已发布 <span class="mono">device_capture_results</span>，未采集不会回填历史成功状态。</span><span>数据时间 10-20 03:18</span></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-asset-panel="batches">
+          <div class="filter-bar">
+            <input class="field field-lg" placeholder="搜索批次 ID / 设备…" />
+            <select class="select"><option>全部触发方式</option><option>启动</option><option>手动</option><option>复测</option><option>迁移</option></select>
+            <select class="select"><option>全部状态</option><option>成功</option><option>部分成功</option><option>失败</option><option>跳过</option></select>
+            <span class="result-count">共 4 个批次</span>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap">
+              <table class="table-dense">
+                <thead><tr><th>批次</th><th>触发</th><th>范围</th><th>状态</th><th>设备</th><th>SSH 命令</th><th>连通性</th><th>发布</th><th style="text-align:right">操作</th></tr></thead>
+                <tbody>
+                  <tr class="clickable" onclick="openCollection('run_534d8cb9c73c484fb69c16822f916f50')">
+                    <td><span class="mono primary-text">run_534d8cb9…</span><span class="sub-text">2026-10-20 03:17:20</span></td>
+                    <td><span class="tag accent">启动</span></td><td>全网 · 9 台</td>
+                    <td><span class="tag warn">部分成功</span></td><td>6 成功 / 2 失败 / 1 跳过</td>
+                    <td class="mono">42 / 42</td><td class="mono">0 / 2</td><td class="mono">03:18</td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="toast('打开单设备采集批次（设计演示）')">
+                    <td><span class="mono primary-text">run_cbaab20e…</span><span class="sub-text">2026-10-20 02:37:16</span></td>
+                    <td><span class="tag">手动</span></td><td>HQ-R1</td>
+                    <td><span class="tag ok">成功</span></td><td>1 成功</td>
+                    <td class="mono">7 / 7</td><td class="mono">—</td><td class="mono">02:37</td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="toast('打开失败批次（设计演示）')">
+                    <td><span class="mono primary-text">run_99129140…</span><span class="sub-text">2026-10-20 02:36:59</span></td>
+                    <td><span class="tag">手动</span></td><td>HQ-R1</td>
+                    <td><span class="tag danger">失败</span></td><td>1 失败</td>
+                    <td class="mono">0 / 1</td><td class="mono">—</td><td class="mono">02:37</td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                  <tr class="clickable" onclick="toast('打开迁移批次（设计演示）')">
+                    <td><span class="mono primary-text">run_0739f60d…</span><span class="sub-text">2026-10-20 00:56:19</span></td>
+                    <td><span class="tag plain">迁移</span></td><td>全网 · 8 台</td>
+                    <td><span class="tag ok">成功</span></td><td>8 成功</td>
+                    <td class="mono">50 / 50</td><td class="mono">—</td><td class="mono">00:57</td>
+                    <td><div class="cell-actions"><button class="btn sm">详情</button></div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-note"><span>批次状态：running / success / partial / failed / skipped / cancelled。</span><span>SSH、SNMP、Ping 结果分别记录</span></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-asset-panel="snapshots">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title"><span class="dot"></span>拓扑快照历史</div>
+              <span class="tag accent">最新快照来自 run_534d8cb9…</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>快照</th><th>来源批次</th><th>来源</th><th>节点</th><th>边</th><th>置信度</th><th>创建时间</th><th style="text-align:right">操作</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono primary-text">snap_7c2e4a…</td><td class="mono">run_534d8cb9…</td><td>CDP + 接口状态</td><td>9</td><td>8</td><td><span class="tag ok">high</span></td><td class="mono">10-20 03:18</td><td><div class="cell-actions"><button class="btn sm" onclick="toast('预览快照（设计演示）')">预览</button></div></td></tr>
+                  <tr><td class="mono primary-text">snap_2b9f10…</td><td class="mono">run_0739f60d…</td><td>迁移生成</td><td>8</td><td>7</td><td><span class="tag warn">medium</span></td><td class="mono">10-20 00:57</td><td><div class="cell-actions"><button class="btn sm" onclick="toast('预览快照（设计演示）')">预览</button></div></td></tr>
+                  <tr><td class="mono primary-text">snap_ab31c8…</td><td class="mono">run_cbaab20e…</td><td>单设备刷新</td><td>1</td><td>0</td><td><span class="tag ok">high</span></td><td class="mono">10-20 02:37</td><td><div class="cell-actions"><button class="btn sm" onclick="toast('预览快照（设计演示）')">预览</button></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card mt-12">
+            <div class="banner info">
+              <span class="b-icon">i</span>
+              <div><strong>拓扑是证据，不是配置。</strong> 节点与边来自采集快照；链路状态不明时显示“未知”，不会用历史成功状态补齐。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 诊断中心 ================= -->
+      <section class="page" id="page-diagnosis">
+        <div class="page-head" style="margin-bottom:12px">
+          <div>
+            <h2 class="page-title">诊断中心</h2>
+            <div class="page-sub">证据优先 · 会话可回溯 · 模型只给建议。诊断结论中的设备事实均可回到采集批次与状态观测。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="toast('打开诊断历史（设计演示）')">全部会话</button>
+            <button class="btn primary" onclick="newDiagnosis()">新建诊断</button>
+          </div>
+        </div>
+
+        <div class="diag-workspace">
+          <aside class="diag-panel">
+            <div class="diag-panel-head">
+              <div class="diag-panel-title">诊断会话</div>
+              <span class="tag plain">1</span>
+            </div>
+            <div class="session-search">
+              <input class="field" placeholder="搜索问题 / 设备 / 会话…" oninput="filterSessions(this.value)" />
+            </div>
+            <div class="session-list">
+              <div class="session-group-label">今天</div>
+              <div class="session-item active" data-session="diag-128">
+                <div class="session-q">分支A的 PC 无法访问总部服务器，请诊断原因。</div>
+                <div class="session-meta"><span>04:12</span><span class="dot-sep"></span><span class="tag accent">KB</span><span>4.2s</span></div>
+              </div>
+              <div class="session-item" data-session="diag-127" onclick="selectSession(this,'DIAG-127')">
+                <div class="session-q">BR-B-PC 到 HQ-SRV 丢包，检查上联链路。</div>
+                <div class="session-meta"><span>03:55</span><span class="dot-sep"></span><span class="tag accent">KB</span><span>6.1s</span></div>
+              </div>
+              <div class="session-group-label">更早</div>
+              <div class="session-item" data-session="diag-126" onclick="selectSession(this,'DIAG-126')">
+                <div class="session-q">HQ-SW1 Gi0/2 端口状态正常吗？</div>
+                <div class="session-meta"><span>昨天</span><span class="dot-sep"></span><span class="tag plain">无 KB</span><span>3.4s</span></div>
+              </div>
+            </div>
+            <div class="table-note" style="border-top:1px solid var(--line)"><span>最近 20 条</span><span class="dim">可导出 Markdown</span></div>
+          </aside>
+
+          <section class="diag-panel diag-main">
+            <div class="diag-session-head">
+              <div class="diag-session-title">
+                <strong id="activeDiagId">DIAG-128</strong>
+                <span class="tag ok">已完成</span>
+                <span class="tag accent">KB ready</span>
+              </div>
+              <div class="row">
+                <span class="dim tiny">qwen-plus · diagnosis_v1 · 4.2s</span>
+                <button class="btn sm" onclick="toast('导出 Markdown 报告（设计演示）')">导出报告</button>
+              </div>
+            </div>
+
+            <div class="chat-scroll" id="chatScroll">
+              <div class="chat-date">2026-10-20 04:12 · 会话已保存</div>
+              <div class="msg-user">
+                分支A的 PC 无法访问总部服务器。BR-A-PC ping 192.168.10.100 不通，请诊断原因。
+                <div class="msg-meta">你 · 04:12</div>
+              </div>
+
+              <div class="assistant-block">
+                <div class="assistant-label"><span class="avatar">AI</span>运维助手 · 证据已关联</div>
+                <div class="tool-strip">
+                  <span class="tool-pill"><span class="ok">成功</span> collect_status · BR-A-R2</span>
+                  <span class="tool-pill"><span class="ok">成功</span> collect_status · BR-A-SW2</span>
+                  <span class="tool-pill"><span class="bad">失败</span> ping_test · BR-A-PC → HQ-SRV</span>
+                  <span class="tool-pill"><span class="ok">成功</span> retrieve · 2 docs</span>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>诊断结论</strong>
+                    <span class="tag warn">链路中断 · 证据一致</span>
+                  </div>
+                  <div class="answer-body">
+                    <p>BR-A-R2 <code>Gi0/1</code> 与 BR-A-SW2 <code>Gi0/0</code> 同时为 <strong>down/down</strong>，且 BR-A-PC 到 HQ-SRV 丢包 100%。证据指向 <strong>分支A路由器—交换机互联链路</strong>，不是总部服务器单点故障。</p>
+                    <p class="dim tiny">结论只引用 2026-10-20 03:18 已发布采集批次；未使用历史成功状态补齐。</p>
+                  </div>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>关键证据</strong>
+                    <span class="tag plain">3 条</span>
+                  </div>
+                  <div class="answer-body">
+                    <div class="evidence-list">
+                      <div class="evidence-item danger">
+                        <div class="evidence-head"><span>BR-A-R2 · Gi0/1</span><span class="mono">03:18</span></div>
+                        <div class="evidence-title">接口 down/down</div>
+                        <div class="evidence-body">物理状态与协议状态均为 down；接口描述为 to BR-A-SW2。</div>
+                      </div>
+                      <div class="evidence-item danger">
+                        <div class="evidence-head"><span>BR-A-SW2 · Gi0/0</span><span class="mono">03:18</span></div>
+                        <div class="evidence-title">接口 down/down</div>
+                        <div class="evidence-body">对端接口同样 down，排除单侧采集误差。</div>
+                      </div>
+                      <div class="evidence-item warn">
+                        <div class="evidence-head"><span>BR-A-PC → 192.168.10.100</span><span class="mono">03:18</span></div>
+                        <div class="evidence-title">ping 100% loss</div>
+                        <div class="evidence-body">源终端连通性测试超时 10s；与链路 down 现象一致。</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>可能原因</strong>
+                    <span class="tag plain">按证据排序</span>
+                  </div>
+                  <div class="answer-body">
+                    <ol>
+                      <li>BR-A-R2 Gi0/1 ↔ BR-A-SW2 Gi0/0 之间物理链路中断：线缆、光模块或端口硬件异常。<span class="tag danger" style="margin-left:4px">优先</span></li>
+                      <li>端口被管理性关闭（shutdown），或对端端口未恢复。<span class="tag warn" style="margin-left:4px">待确认</span></li>
+                      <li>端口 VLAN / trunk 配置漂移。当前证据不足以单独成立，作为次级排查项。</li>
+                    </ol>
+                  </div>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>检查步骤</strong>
+                    <span class="tag plain">只读</span>
+                  </div>
+                  <div class="answer-body">
+                    <ol>
+                      <li>现场查看 BR-A-R2 Gi0/1 与 BR-A-SW2 Gi0/0 端口指示灯，确认线缆连接。</li>
+                      <li>在两台设备执行 <code>show interface Gi0/1</code> / <code>show interface Gi0/0</code>，核对 physical state、duplex、speed 与 error 计数。</li>
+                      <li>如物理状态为 up、协议为 down，再检查 VLAN/trunk 与对端配置；不要把配置猜测当作已证实结论。</li>
+                    </ol>
+                  </div>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>处置建议</strong>
+                    <span class="tag warn">需人工确认</span>
+                  </div>
+                  <div class="answer-body">
+                    <div class="suggestion-item">
+                      <div class="sg-title"><span>现场检查线缆与光模块</span><span class="tag danger">物理操作</span></div>
+                      <div class="sg-body">检查两端连接、替换跳线或光模块；记录现场结果与照片。系统不会代替人工执行物理操作。</div>
+                      <div class="suggestion-actions">
+                        <button class="btn sm" onclick="openChangeModal()">创建变更请求</button>
+                        <button class="btn sm ghost" onclick="toast('已复制现场检查清单（设计演示）')">复制检查清单</button>
+                      </div>
+                    </div>
+                    <div class="suggestion-item">
+                      <div class="sg-title"><span>若端口被管理性关闭，人工恢复</span><span class="tag warn">软件命令</span></div>
+                      <div class="sg-body">人工在设备上执行 <code>interface Gi0/1</code> → <code>no shutdown</code>，随后录入实际命令与输出；执行前必须完成配置备份。</div>
+                      <div class="suggestion-actions">
+                        <button class="btn sm" onclick="openChangeModal()">创建变更请求</button>
+                        <button class="btn sm ghost" onclick="toast('已复制建议命令（设计演示）')">复制命令</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="answer-card">
+                  <div class="answer-head">
+                    <strong>复测与信息缺失</strong>
+                    <span class="tag plain">闭环</span>
+                  </div>
+                  <div class="answer-body">
+                    <p><strong>复测：</strong>从 BR-A-PC ping 192.168.10.100，确认 0% 丢包；同时核对两端接口 up/up、路由恢复。</p>
+                    <p><strong>信息缺失：</strong>未采集到光模块诊断与现场端口日志；若物理检查正常，再补充设备日志。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="composer-row">
+                <textarea id="diagComposer" placeholder="继续追问，或补充现场信息…"></textarea>
+                <button class="btn primary" style="height:40px" onclick="sendDiag()">发送</button>
+              </div>
+              <div class="composer-foot">
+                <div class="row">
+                  <span class="chip active" style="height:22px">知识库检索</span>
+                  <span class="chip" style="height:22px">继续当前会话</span>
+                </div>
+                <span class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+              </div>
+            </div>
+          </section>
+
+          <aside class="diag-panel diag-right">
+            <div class="diag-right-inner">
+              <div class="mini-topo">
+                <svg viewBox="0 0 300 132" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+                  <circle cx="58" cy="44" r="13" fill="#132238" stroke="#3ED598" stroke-opacity=".6"/>
+                  <text x="58" y="47" text-anchor="middle" fill="#E7EEF8" font-size="7">R2</text>
+                  <circle cx="58" cy="93" r="13" fill="#132238" stroke="#F5B94C" stroke-opacity=".7"/>
+                  <text x="58" y="96" text-anchor="middle" fill="#E7EEF8" font-size="7">SW2</text>
+                  <circle cx="154" cy="44" r="11" fill="#132238" stroke="#F2777A" stroke-opacity=".7"/>
+                  <text x="154" y="47" text-anchor="middle" fill="#E7EEF8" font-size="6.5">PC</text>
+                  <circle cx="246" cy="44" r="13" fill="#132238" stroke="#3ED598" stroke-opacity=".45"/>
+                  <text x="246" y="47" text-anchor="middle" fill="#E7EEF8" font-size="7">HQ</text>
+                  <line x1="58" y1="57" x2="58" y2="80" stroke="#F2777A" stroke-width="2" stroke-dasharray="3 2"/>
+                  <line x1="71" y1="48" x2="141" y2="45" stroke="#F2777A" stroke-width="1.5" stroke-dasharray="3 2"/>
+                  <line x1="165" y1="44" x2="233" y2="44" stroke="#3ED598" stroke-opacity=".45" stroke-width="1.5"/>
+                  <text x="34" y="72" fill="#F2777A" font-size="6.5">Gi0/1</text>
+                  <text x="94" y="38" fill="#F2777A" font-size="6.5">unreachable</text>
+                  <text x="176" y="36" fill="#6F829C" font-size="6.5">WAN</text>
+                </svg>
+              </div>
+
+              <div class="segmented context-tabs" style="display:flex;width:100%">
+                <button class="seg active" data-ctx="evidence" onclick="switchContext('evidence')">证据 3</button>
+                <button class="seg" data-ctx="knowledge" onclick="switchContext('knowledge')">知识 2</button>
+                <button class="seg" data-ctx="calls" onclick="switchContext('calls')">调用 4</button>
+              </div>
+
+              <div class="context-tab-panel active" data-ctx-panel="evidence">
+                <div class="context-card">
+                  <div class="cc-head"><span class="status-text danger"><span class="status-dot danger"></span>BR-A-R2</span><span class="mono">03:18</span></div>
+                  <div class="cc-title">Gi0/1 down/down</div>
+                  <div class="cc-body">物理/协议均 down；对端 SW2 Gi0/0 同样 down。批次 run_534d8cb9…</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span class="status-text warn"><span class="status-dot warn"></span>BR-A-SW2</span><span class="mono">03:18</span></div>
+                  <div class="cc-title">Gi0/0 down/down</div>
+                  <div class="cc-body">VLAN 10 正常；上联端口异常。可用接口状态与 CDP 共同定位。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span class="status-text danger"><span class="status-dot danger"></span>BR-A-PC</span><span class="mono">03:18</span></div>
+                  <div class="cc-title">ping 100% loss</div>
+                  <div class="cc-body">BR-A-PC → 192.168.10.100 超时 10s；源终端 SSH 不可用。</div>
+                </div>
+              </div>
+
+              <div class="context-tab-panel" data-ctx-panel="knowledge">
+                <div class="context-card">
+                  <div class="cc-head"><span class="tag violet">KB-IF-001</span><span class="mono">0.61</span></div>
+                  <div class="cc-title">接口 administratively down 手动恢复</div>
+                  <div class="cc-body">Cisco 官方文档 · Interface Configuration Guide · v1.0</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span class="tag violet">KB-IF-002</span><span class="mono">0.68</span></div>
+                  <div class="cc-title">接口 line protocol down（physical up）</div>
+                  <div class="cc-body">Cisco 官方文档 · WAN Interface Troubleshooting · v1.0</div>
+                </div>
+                <div class="banner info" style="margin-top:7px"><span class="b-icon">i</span><div>检索距离越小越相关；来源与文章版本保存在 <span class="mono">retrieval_hits</span>。</div></div>
+              </div>
+
+              <div class="context-tab-panel" data-ctx-panel="calls">
+                <div class="context-card">
+                  <div class="cc-head"><span>模型调用</span><span class="mono">4.2s</span></div>
+                  <div class="cc-title">qwen-plus</div>
+                  <div class="cc-body">prompt diagnosis_v1 · 总耗时 4200ms · 输出已解析</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span>上下文快照</span><span class="tag plain">已保存</span></div>
+                  <div class="cc-title mono">ctx_8f2a…</div>
+                  <div class="cc-body">包含问题、脱敏证据、检索命中与提示词版本。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span>工具调用</span><span class="tag ok">3 成功</span></div>
+                  <div class="cc-title">collect_status · ping_test · retrieve</div>
+                  <div class="cc-body">工具参数、结果与采集批次关联写入审计。</div>
+                </div>
+              </div>
+
+              <div class="next-action">
+                <div class="na-title">下一步：转入人工变更</div>
+                <div class="na-desc">模型只提供建议，不直接下发配置。变更必须经过审批、备份、人工执行记录与真实复测。</div>
+                <div class="row" style="margin-top:8px">
+                  <button class="btn sm primary" onclick="openChangeModal()">创建变更请求</button>
+                  <button class="btn sm" onclick="toast('已复测（设计演示）')">发起复测</button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ================= 变更与复测 ================= -->
+      <section class="page" id="page-changes">
+        <div class="page-head">
+          <div>
+            <h2 class="page-title">变更与复测</h2>
+            <div class="page-sub">模型建议进入这里后变成可审计的人工变更：审批 → 配置备份 → 人工执行记录 → 真实采集复测 → 完成/回滚。系统不自动下发配置。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="go('diagnosis')">从诊断创建</button>
+            <button class="btn primary" onclick="toast('打开新建变更表单（设计演示）')">新建变更</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot warn"></span>待审批</div>
+            <div class="kpi-value warn">1</div>
+            <div class="kpi-meta">CHG-20261020-004 · 中风险</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot accent"></span>执行中</div>
+            <div class="kpi-value accent">1</div>
+            <div class="kpi-meta">等待人工记录实际命令</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot ok"></span>已完成</div>
+            <div class="kpi-value ok">4</div>
+            <div class="kpi-meta">近 7 天 · 3 次复测通过</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label"><span class="status-dot danger"></span>复测通过率</div>
+            <div class="kpi-value">75<small>%</small></div>
+            <div class="kpi-meta">4 次复测 · 1 次未通过</div>
+          </div>
+        </div>
+
+        <div class="change-workspace">
+          <div class="card change-list-panel">
+            <div class="card-head">
+              <div class="card-title"><span class="dot"></span>变更队列</div>
+              <span class="tag plain">6</span>
+            </div>
+            <div class="filter-bar" style="margin-bottom:8px">
+              <input class="field fill" placeholder="搜索变更 / 设备 / 诊断…" style="min-width:0" />
+            </div>
+            <div class="chips" style="margin-bottom:9px">
+              <span class="chip active">全部</span>
+              <span class="chip">待审批 1</span>
+              <span class="chip">执行中 1</span>
+              <span class="chip">已完成 4</span>
+            </div>
+            <div class="change-list">
+              <div class="change-item active">
+                <div class="ci-top"><span class="ci-id">CHG-20261020-004</span><span class="tag warn">待审批</span></div>
+                <div class="ci-title">恢复 BR-A-R2 Gi0/1 上联链路</div>
+                <div class="ci-meta"><span>BR-A-R2</span><span class="dot-sep"></span><span>中风险</span><span class="dot-sep"></span><span>DIAG-128</span></div>
+                <div class="ci-meta"><span>申请人 admin · 4 分钟前</span></div>
+              </div>
+              <div class="change-item" onclick="selectChange(this)">
+                <div class="ci-top"><span class="ci-id">CHG-20261020-003</span><span class="tag accent">执行中</span></div>
+                <div class="ci-title">核对 BR-A-SW2 VLAN 10 接入端口</div>
+                <div class="ci-meta"><span>BR-A-SW2</span><span class="dot-sep"></span><span>低风险</span><span class="dot-sep"></span><span>DIAG-126</span></div>
+                <div class="ci-meta"><span>执行人 operator · 18 分钟前</span></div>
+              </div>
+              <div class="change-item" onclick="selectChange(this)">
+                <div class="ci-top"><span class="ci-id">CHG-20261019-002</span><span class="tag ok">已完成</span></div>
+                <div class="ci-title">更换 BR-B-R3 上联光模块</div>
+                <div class="ci-meta"><span>BR-B-R3</span><span class="dot-sep"></span><span>高风险</span><span class="dot-sep"></span><span>DIAG-121</span></div>
+                <div class="ci-meta"><span>复测通过 · 昨天 22:40</span></div>
+              </div>
+              <div class="change-item" onclick="selectChange(this)">
+                <div class="ci-top"><span class="ci-id">CHG-20261019-001</span><span class="tag plain">已回滚</span></div>
+                <div class="ci-title">HQ-SW1 Gi0/2 端口恢复尝试</div>
+                <div class="ci-meta"><span>HQ-SW1</span><span class="dot-sep"></span><span>中风险</span><span class="dot-sep"></span><span>DIAG-119</span></div>
+                <div class="ci-meta"><span>复测未通过 · 昨天 20:12</span></div>
+              </div>
+            </div>
+            <div class="table-note" style="padding:9px 0 0;margin-top:8px"><span>仅显示最近变更</span><span>共 6 条</span></div>
+          </div>
+
+          <div class="change-detail">
+            <div class="card change-hero">
+              <div class="change-hero-top">
+                <div>
+                  <div class="row" style="margin-bottom:5px">
+                    <span class="mono dim">CHG-20261020-004</span>
+                    <span class="tag warn">待审批</span>
+                    <span class="tag danger">中风险</span>
+                    <span class="tag plain">software + physical</span>
+                  </div>
+                  <h3>恢复 BR-A-R2 Gi0/1 上联链路</h3>
+                  <div class="hero-meta">
+                    <span class="tag blue">BR-A-R2</span>
+                    <span class="tag">分支A路由器</span>
+                    <span class="tag">申请人 admin</span>
+                    <span class="tag plain">2026-10-20 04:18</span>
+                  </div>
+                  <div class="hero-link">关联诊断 <a href="#" onclick="go('diagnosis');return false;">DIAG-128</a> · 分支A PC 无法访问总部服务器</div>
+                </div>
+                <button class="btn sm ghost" onclick="toast('查看变更事件流（设计演示）')">事件流</button>
+              </div>
+              <div class="stepper">
+                <div class="step-node done"><span class="sn-dot"></span><span class="sn-label">创建</span></div>
+                <div class="step-node current"><span class="sn-dot"></span><span class="sn-label">审批</span></div>
+                <div class="step-node pending"><span class="sn-dot"></span><span class="sn-label">备份</span></div>
+                <div class="step-node pending"><span class="sn-dot"></span><span class="sn-label">执行</span></div>
+                <div class="step-node pending"><span class="sn-dot"></span><span class="sn-label">复测</span></div>
+                <div class="step-node pending"><span class="sn-dot"></span><span class="sn-label">完成</span></div>
+              </div>
+            </div>
+
+            <div class="change-columns">
+              <div class="card">
+                <div class="card-head">
+                  <div class="card-title"><span class="dot"></span>执行计划</div>
+                  <span class="tag plain">4 步</span>
+                </div>
+                <div class="step-list">
+                  <div class="step-card">
+                    <div class="step-no">1</div>
+                    <div class="step-main">
+                      <div class="step-title"><span>备份当前运行配置</span><span class="tag plain">系统读取</span></div>
+                      <div class="step-desc">审批通过后读取 BR-A-R2 运行配置，写入 raw_blobs 与 config_backups，并记录 SHA-256。备份未成功前不能执行变更。</div>
+                    </div>
+                  </div>
+                  <div class="step-card">
+                    <div class="step-no">2</div>
+                    <div class="step-main">
+                      <div class="step-title"><span>现场检查 Gi0/1 ↔ Gi0/0 链路</span><span class="tag danger">物理操作</span></div>
+                      <div class="step-desc">检查线缆、光模块与端口指示灯；记录现场结果和证据说明。可由人工补充照片哈希。</div>
+                      <div class="step-cmd"><button class="btn sm" onclick="toast('打开物理操作记录（设计演示）')">记录现场结果</button></div>
+                    </div>
+                  </div>
+                  <div class="step-card">
+                    <div class="step-no">3</div>
+                    <div class="step-main">
+                      <div class="step-title"><span>人工确认端口状态并恢复</span><span class="tag warn">软件命令</span></div>
+                      <div class="step-desc">先执行只读检查；若确认端口被管理性关闭，由人工在设备上执行恢复命令，再录入实际命令、输出和退出码。</div>
+                      <div class="step-cmd">
+                        <div class="code"><span class="cmt"># 只读检查</span>
+show interface GigabitEthernet0/1
+<span class="cmt"># 人工确认后执行；系统不自动下发</span>
+configure terminal
+interface GigabitEthernet0/1
+no shutdown</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="step-card">
+                    <div class="step-no">4</div>
+                    <div class="step-main">
+                      <div class="step-title"><span>复测 BR-A-PC → HQ-SRV</span><span class="tag ok">真实采集</span></div>
+                      <div class="step-desc">创建 result_type=recheck 的采集批次；从 BR-A-PC ping 192.168.10.100，并核对两端接口 up/up。</div>
+                      <div class="step-cmd"><button class="btn sm" onclick="toast('执行真实复测（设计演示）')">发起复测</button></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div class="card side-card">
+                  <div class="card-head" style="margin-bottom:9px">
+                    <div class="card-title"><span class="dot" style="background:var(--amber);box-shadow:0 0 9px rgba(245,185,76,.5)"></span>审批</div>
+                    <span class="tag warn">待处理</span>
+                  </div>
+                  <div class="approval-box">
+                    <input class="field" placeholder="审批人" value="approver01" />
+                    <button class="btn sm primary" onclick="toast('已批准变更（设计演示）')">批准</button>
+                  </div>
+                  <textarea class="textarea" style="min-height:58px;margin-top:7px" placeholder="审批意见（可选）">证据充分，同意先备份并现场检查。</textarea>
+                  <div class="row" style="margin-top:7px">
+                    <button class="btn sm danger" onclick="toast('已驳回（设计演示）')">驳回</button>
+                    <button class="btn sm ghost" onclick="toast('已要求修改（设计演示）')">要求修改</button>
+                  </div>
+                </div>
+
+                <div class="card side-card">
+                  <div class="card-head" style="margin-bottom:9px">
+                    <div class="card-title"><span class="dot"></span>配置备份</div>
+                    <span class="tag plain">未开始</span>
+                  </div>
+                  <div class="meta-grid">
+                    <div class="meta-item"><div class="meta-label">目标设备</div><div class="meta-value">BR-A-R2</div></div>
+                    <div class="meta-item"><div class="meta-label">备份类型</div><div class="meta-value">before</div></div>
+                    <div class="meta-item"><div class="meta-label">校验</div><div class="meta-value dim">审批后生成</div></div>
+                    <div class="meta-item"><div class="meta-label">回滚方案</div><div class="meta-value">从备份恢复运行配置</div></div>
+                  </div>
+                  <button class="btn sm" style="margin-top:9px" disabled>备份当前配置</button>
+                </div>
+
+                <div class="card side-card">
+                  <div class="card-head" style="margin-bottom:8px">
+                    <div class="card-title"><span class="dot"></span>复测对比</div>
+                    <span class="tag plain">待执行</span>
+                  </div>
+                  <table class="recheck-compare">
+                    <thead><tr><th>检查项</th><th>变更前</th><th>变更后</th></tr></thead>
+                    <tbody>
+                      <tr><td>Gi0/1 接口</td><td class="status-text danger">down</td><td class="dim">待测</td></tr>
+                      <tr><td>Gi0/0 接口</td><td class="status-text danger">down</td><td class="dim">待测</td></tr>
+                      <tr><td>BR-A-PC ping</td><td class="status-text danger">100% loss</td><td class="dim">待测</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="card side-card">
+                  <div class="card-head" style="margin-bottom:8px">
+                    <div class="card-title"><span class="dot"></span>事件流</div>
+                    <span class="tag plain">追加</span>
+                  </div>
+                  <div class="timeline">
+                    <div class="tl-item"><div class="tl-title">pending_approval</div><div class="tl-meta">04:18 · admin · 提交审批</div></div>
+                    <div class="tl-item ok"><div class="tl-title">created</div><div class="tl-meta">04:18 · admin · 关联 DIAG-128</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="footer-action-bar">
+              <div class="banner warn" style="border:0;background:transparent;padding:0">
+                <span class="b-icon">!</span>
+                <div><strong>配置变更边界：</strong>系统不会把模型建议直接转换为配置命令并下发。</div>
+              </div>
+              <div class="row">
+                <button class="btn" onclick="toast('查看完整审计（设计演示）')">查看审计</button>
+                <button class="btn primary" onclick="toast('已批准变更（设计演示）')">批准并进入备份</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 知识与评测 ================= -->
+      <section class="page" id="page-knowledge">
+        <div class="page-head">
+          <div>
+            <h2 class="page-title">知识与评测</h2>
+            <div class="page-sub">知识库从“文章”走到“可检索索引”，每条命中可回溯来源与版本；评测用同一证据对比有/无知识库，避免把模型波动误判为知识库收益。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="toast('已刷新知识库状态（设计演示）')">刷新状态</button>
+            <button class="btn primary" onclick="switchKnowledgeTab('eval')">查看评测</button>
+          </div>
+        </div>
+
+        <div class="tabs" id="knowledgeTabs">
+          <button class="tab active" data-knowledge-tab="kb" onclick="switchKnowledgeTab('kb')">知识库 <span class="tag ok">ready</span></button>
+          <button class="tab" data-knowledge-tab="eval" onclick="switchKnowledgeTab('eval')">效果评测 <span class="tag plain">10 cases</span></button>
+        </div>
+
+        <div class="tab-panel active" data-knowledge-panel="kb">
+          <div class="kpi-grid">
+            <div class="kpi">
+              <div class="kpi-label"><span class="status-dot ok"></span>活跃索引</div>
+              <div class="kpi-value ok">Ready</div>
+              <div class="kpi-meta"><span class="mono">kbindex_f7a5…</span></div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label"><span class="status-dot accent"></span>文章 / 来源</div>
+              <div class="kpi-value">26 <small>/ 26</small></div>
+              <div class="kpi-meta">6 类 · 26 个可检索片段</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label"><span class="status-dot accent"></span>Embedding</div>
+              <div class="kpi-value" style="font-size:17px;letter-spacing:-0.2px">bge-small-zh</div>
+              <div class="kpi-meta">512 维 · fastembed-onnx</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label"><span class="status-dot ok"></span>最近构建</div>
+              <div class="kpi-value" style="font-size:17px;letter-spacing:-0.2px">10-20 03:27</div>
+              <div class="kpi-meta">构建成功 · 旧索引未被替换</div>
+            </div>
+          </div>
+
+          <div class="kb-layout">
+            <div class="card flush">
+              <div class="filter-bar" style="padding:12px 12px 0;margin-bottom:0">
+                <input class="field field-lg" placeholder="检索标题 / ID / 来源…" oninput="filterArticles(this.value)" />
+                <div class="chips">
+                  <span class="chip active">全部</span>
+                  <span class="chip">接口</span>
+                  <span class="chip">VLAN</span>
+                  <span class="chip">路由</span>
+                  <span class="chip">ACL</span>
+                </div>
+                <span class="result-count" id="articleCount">26 篇</span>
+              </div>
+              <div class="table-wrap" style="margin-top:9px">
+                <table class="table-dense" id="articleTable">
+                  <thead><tr><th>文章</th><th>分类</th><th>适用平台</th><th>版本</th><th>状态</th><th style="text-align:right">操作</th></tr></thead>
+                  <tbody>
+                    <tr class="clickable" onclick="selectArticle('KB-IF-001')">
+                      <td><div class="article-id">KB-IF-001</div><div class="article-title">接口 administratively down 手动恢复</div></td>
+                      <td><span class="tag warn">接口</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                    <tr class="clickable" onclick="selectArticle('KB-IF-002')">
+                      <td><div class="article-id">KB-IF-002</div><div class="article-title">接口 line protocol down（physical up）</div></td>
+                      <td><span class="tag warn">接口</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                    <tr class="clickable" onclick="selectArticle('KB-VLAN-001')">
+                      <td><div class="article-id">KB-VLAN-001</div><div class="article-title">接入端口未加入正确 VLAN，导致终端二层不通</div></td>
+                      <td><span class="tag accent">VLAN</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                    <tr class="clickable" onclick="selectArticle('KB-VLAN-002')">
+                      <td><div class="article-id">KB-VLAN-002</div><div class="article-title">Trunk 链路未放通业务 VLAN，跨交换机 VLAN 不通</div></td>
+                      <td><span class="tag accent">VLAN</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                    <tr class="clickable" onclick="selectArticle('KB-ROUTE-001')">
+                      <td><div class="article-id">KB-ROUTE-001</div><div class="article-title">缺少默认路由导致分支未知目的地不可达</div></td>
+                      <td><span class="tag blue">路由</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                    <tr class="clickable" onclick="selectArticle('KB-ACL-002')">
+                      <td><div class="article-id">KB-ACL-002</div><div class="article-title">隐式 deny any 与未显式放行导致业务被拒</div></td>
+                      <td><span class="tag danger">ACL</span></td><td>Cisco IOS</td><td class="mono">v1.0</td><td><span class="tag ok">active</span></td>
+                      <td><div class="cell-actions"><button class="btn sm">预览</button></div></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-note"><span>文章编辑与重建接口尚未落地，设计稿保持只读展示。</span><span>显示 6 / 26</span></div>
+            </div>
+
+            <div>
+              <div class="card kb-preview">
+                <div class="between">
+                  <span class="tag violet">KB-IF-001</span>
+                  <span class="tag ok">active</span>
+                </div>
+                <div class="preview-title">接口 administratively down 手动恢复</div>
+                <div class="row" style="margin-bottom:8px">
+                  <span class="tag">接口故障</span><span class="tag">Cisco IOS</span><span class="tag plain">v1.0</span>
+                </div>
+                <div class="preview-body">
+                  <p><strong>现象：</strong>接口 physical state 为 administratively down，通常由人工 <code>shutdown</code> 或配置模板误下发导致。</p>
+                  <p><strong>核对：</strong>先确认端口描述、对端状态与变更历史；不要仅凭单侧状态判断链路硬件故障。</p>
+                  <p><strong>处理：</strong>人工确认影响范围后执行 <code>no shutdown</code>，再检查协议状态与路由收敛。</p>
+                </div>
+                <div class="divider"></div>
+                <div class="meta-grid">
+                  <div class="meta-item"><div class="meta-label">来源</div><div class="meta-value">Cisco 官方文档 · Interface Configuration Guide</div></div>
+                  <div class="meta-item"><div class="meta-label">内容哈希</div><div class="meta-value mono">e946a189…</div></div>
+                  <div class="meta-item"><div class="meta-label">命中次数</div><div class="meta-value">3 次诊断</div></div>
+                  <div class="meta-item"><div class="meta-label">最近命中</div><div class="meta-value">04:12 · DIAG-128</div></div>
+                </div>
+              </div>
+
+              <div class="card mt-12">
+                <div class="card-head">
+                  <div class="card-title"><span class="dot"></span>索引版本</div>
+                  <button class="btn sm" disabled title="当前需 CLI：python -m knowledge_base.build_index --rebuild">重建索引</button>
+                </div>
+                <div class="index-mini">
+                  <div class="im-item"><div class="im-label">当前索引</div><div class="im-value mono">kbindex_f7a5…</div></div>
+                  <div class="im-item"><div class="im-label">集合</div><div class="im-value mono">ops_knowledge_base</div></div>
+                  <div class="im-item"><div class="im-label">条目</div><div class="im-value">26</div></div>
+                  <div class="im-item"><div class="im-label">构建耗时</div><div class="im-value">18.4s</div></div>
+                </div>
+                <div class="banner info" style="margin-top:9px"><span class="b-icon">i</span><div>只有 Chroma 写入成功后才发布新索引；失败索引保留为 <span class="mono">failed</span>，旧索引不被替换。</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-12 flush">
+            <div class="card-head" style="padding:13px 15px 0;margin-bottom:9px">
+              <div class="card-title"><span class="dot"></span>索引构建历史</div>
+              <span class="tag ok">最近成功</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>版本</th><th>状态</th><th>模型</th><th>条目</th><th>构建时间</th><th>错误</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">kbindex_f7a5b6ec…</td><td><span class="tag ok">ready · 当前</span></td><td class="mono">bge-small-zh-v1.5</td><td>26</td><td class="mono">2026-10-20 03:27:52</td><td class="dim">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-knowledge-panel="eval">
+          <div class="card" style="margin-bottom:10px">
+            <div class="between">
+              <div>
+                <div class="row">
+                  <span class="mono" style="color:var(--text);font-size:12px">EXP-20261020-01</span>
+                  <span class="tag ok">completed</span>
+                  <span class="tag accent">同一证据 · 双模式</span>
+                </div>
+                <div class="page-sub" style="margin-top:5px">测试集 kb_compare_v1 · 10 个场景 · qwen-plus · 索引 <span class="mono">kbindex_f7a5…</span> · 开始于 2026-10-20 04:02</div>
+              </div>
+              <div class="row">
+                <button class="btn" onclick="toast('切换实验（设计演示）')">切换实验</button>
+                <button class="btn" onclick="toast('导出评测结果（设计演示）')">导出结果</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="eval-kpis">
+            <div class="eval-kpi">
+              <div class="ek-label">准确率</div>
+              <div class="ek-values"><span class="ek-main">80%</span><span class="ek-sub">无 KB 60%</span></div>
+              <div class="ek-delta">+20pp · 有知识库更好</div>
+            </div>
+            <div class="eval-kpi">
+              <div class="ek-label">可执行性</div>
+              <div class="ek-values"><span class="ek-main">0.86</span><span class="ek-sub">无 KB 0.72</span></div>
+              <div class="ek-delta">+0.14 · 建议更具体</div>
+            </div>
+            <div class="eval-kpi">
+              <div class="ek-label">平均全链路耗时</div>
+              <div class="ek-values"><span class="ek-main">4.2s</span><span class="ek-sub">无 KB 3.8s</span></div>
+              <div class="ek-delta down">+0.4s · 检索成本</div>
+            </div>
+            <div class="eval-kpi">
+              <div class="ek-label">证据一致性</div>
+              <div class="ek-values"><span class="ek-main">10/10</span><span class="ek-sub">同 case 同证据</span></div>
+              <div class="ek-delta">可用于对比</div>
+            </div>
+          </div>
+
+          <div class="grid cols-2">
+            <div class="card chart-card">
+              <div class="card-head">
+                <div class="card-title"><span class="dot"></span>分类准确率对比</div>
+                <div class="chart-legend">
+                  <span class="legend-key"><span class="legend-swatch" style="background:#38D3F5"></span>有知识库</span>
+                  <span class="legend-key"><span class="legend-swatch" style="background:#6C7F99"></span>无知识库</span>
+                </div>
+              </div>
+              <div class="chart-row"><div class="chart-label">链路故障</div><div class="chart-bars"><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><div class="bar-track"><div class="bar-fill alt" style="width:50%"></div></div></div><div class="chart-value">100 / 50</div></div>
+              <div class="chart-row"><div class="chart-label">VLAN 配置</div><div class="chart-bars"><div class="bar-track"><div class="bar-fill" style="width:75%"></div></div><div class="bar-track"><div class="bar-fill alt" style="width:50%"></div></div></div><div class="chart-value">75 / 50</div></div>
+              <div class="chart-row"><div class="chart-label">路由 / ACL</div><div class="chart-bars"><div class="bar-track"><div class="bar-fill" style="width:75%"></div></div><div class="bar-track"><div class="bar-fill alt" style="width:50%"></div></div></div><div class="chart-value">75 / 50</div></div>
+              <div class="chart-row"><div class="chart-label">正常 / 证据不足</div><div class="chart-bars"><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><div class="bar-track"><div class="bar-fill alt" style="width:100%"></div></div></div><div class="chart-value">100 / 100</div></div>
+              <div class="table-note" style="padding:8px 0 0;margin-top:6px"><span>分数来自 10 个场景；演示数据用于布局。</span><span>准确率 = correct + 0.5 × partial</span></div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title"><span class="dot"></span>实验健康度</div>
+                <span class="tag ok">可比</span>
+              </div>
+              <div class="stack">
+                <div class="context-card">
+                  <div class="cc-head"><span>证据一致性</span><span class="tag ok">10 / 10</span></div>
+                  <div class="cc-body">同一 case 的有/无知识库运行复用同一证据哈希，排除采集波动。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span>错误分类</span><span class="tag plain">2 例</span></div>
+                  <div class="cc-body">无知识库 2 例误判为“服务器故障”，有知识库均定位到接入链路。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span>失败/跳过</span><span class="tag ok">0</span></div>
+                  <div class="cc-body">所有用例完成模型调用与评分；未出现超时或解析失败。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-12 flush">
+            <div class="card-head" style="padding:13px 15px 0;margin-bottom:9px">
+              <div class="card-title"><span class="dot"></span>逐案例结果</div>
+              <div class="row">
+                <span class="tag plain">10 个场景</span>
+                <button class="btn sm ghost" onclick="toast('查看全部评测案例（设计演示）')">全部</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="table-dense">
+                <thead><tr><th>用例</th><th>分类</th><th>有知识库</th><th>无知识库</th><th>可执行性</th><th>耗时</th><th>结论</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="primary-text">LINK_DOWN_01</span><span class="sub-text">分支A路由器-交换机不通</span></td><td>链路故障</td><td><span class="case-result" style="color:var(--green)">● correct</span></td><td><span class="case-result" style="color:var(--amber)">◐ partial</span></td><td class="mono">0.90 / 0.60</td><td class="mono">3.9 / 3.5s</td><td><span class="tag ok">有收益</span></td></tr>
+                  <tr><td><span class="primary-text">LINK_DOWN_02</span><span class="sub-text">HQ-SW1 上联端口 down</span></td><td>链路故障</td><td><span class="case-result" style="color:var(--green)">● correct</span></td><td><span class="case-result" style="color:var(--red)">● wrong</span></td><td class="mono">0.85 / 0.45</td><td class="mono">4.1 / 3.7s</td><td><span class="tag ok">有收益</span></td></tr>
+                  <tr><td><span class="primary-text">VLAN_MISCONFIG_01</span><span class="sub-text">接入端口 VLAN 漂移</span></td><td>VLAN</td><td><span class="case-result" style="color:var(--green)">● correct</span></td><td><span class="case-result" style="color:var(--amber)">◐ partial</span></td><td class="mono">0.88 / 0.65</td><td class="mono">4.4 / 3.8s</td><td><span class="tag ok">有收益</span></td></tr>
+                  <tr><td><span class="primary-text">ACL_OVERBLOCK_01</span><span class="sub-text">ACL 隐式拒绝业务</span></td><td>ACL</td><td><span class="case-result" style="color:var(--amber)">◐ partial</span></td><td><span class="case-result" style="color:var(--red)">● wrong</span></td><td class="mono">0.70 / 0.42</td><td class="mono">4.6 / 4.0s</td><td><span class="tag warn">待优化</span></td></tr>
+                  <tr><td><span class="primary-text">INSUFFICIENT_EVIDENCE_01</span><span class="sub-text">证据不足时拒绝断言</span></td><td>证据不足</td><td><span class="case-result" style="color:var(--green)">● correct</span></td><td><span class="case-result" style="color:var(--green)">● correct</span></td><td class="mono">0.95 / 0.90</td><td class="mono">3.2 / 3.0s</td><td><span class="tag plain">持平</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-note"><span>点击行可查看期望要点、命中/缺失词与禁止断言。</span><span>显示 5 / 10</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 审计与设置 ================= -->
+      <section class="page" id="page-governance">
+        <div class="page-head">
+          <div>
+            <h2 class="page-title">审计与设置</h2>
+            <div class="page-sub">运行健康、只追加审计、保留策略与权限边界集中在这里。默认 dry-run，审计日志不自动清理。</div>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="toast('已刷新运行状态（设计演示）')">刷新状态</button>
+            <button class="btn primary" onclick="toast('打开系统设置（设计演示）')">系统设置</button>
+          </div>
+        </div>
+
+        <div class="tabs" id="governanceTabs">
+          <button class="tab active" data-gov-tab="health" onclick="switchGovernanceTab('health')">运行健康</button>
+          <button class="tab" data-gov-tab="audit" onclick="switchGovernanceTab('audit')">审计日志</button>
+          <button class="tab" data-gov-tab="retention" onclick="switchGovernanceTab('retention')">保留策略</button>
+          <button class="tab" data-gov-tab="access" onclick="switchGovernanceTab('access')">权限与边界</button>
+        </div>
+
+        <div class="tab-panel active" data-gov-panel="health">
+          <div class="health-grid">
+            <div class="health-item">
+              <div class="hi-top"><span>SQLite</span><span class="status-text ok"><span class="status-dot ok"></span>ok</span></div>
+              <div class="hi-value">data/ops.db</div>
+              <div class="hi-meta">schema v5 · 2.3 MB · 外键正常</div>
+            </div>
+            <div class="health-item">
+              <div class="hi-top"><span>知识库</span><span class="status-text ok"><span class="status-dot ok"></span>ready</span></div>
+              <div class="hi-value">26 篇 · 26 chunks</div>
+              <div class="hi-meta">active index 与 Chroma 数量一致</div>
+            </div>
+            <div class="health-item">
+              <div class="hi-top"><span>运行时</span><span class="status-text ok"><span class="status-dot ok"></span>ready</span></div>
+              <div class="hi-value">FastAPI · 单进程</div>
+              <div class="hi-meta">Token 鉴权 · RBAC 未强制</div>
+            </div>
+            <div class="health-item">
+              <div class="hi-top"><span>启动采集</span><span class="status-text warn"><span class="status-dot warn"></span>partial</span></div>
+              <div class="hi-value">6 成功 / 2 失败</div>
+              <div class="hi-meta">1 跳过 · 最近 03:18</div>
+            </div>
+          </div>
+
+          <div class="grid cols-2">
+            <div class="card flush">
+              <div class="card-head" style="padding:13px 15px 0;margin-bottom:9px">
+                <div class="card-title"><span class="dot"></span>最近健康检查</div>
+                <span class="tag plain">20 条</span>
+              </div>
+              <div class="table-wrap">
+                <table class="table-dense">
+                  <thead><tr><th>组件</th><th>状态</th><th>检查时间</th><th>详情</th></tr></thead>
+                  <tbody>
+                    <tr><td class="primary-text">database</td><td><span class="tag ok">ok</span></td><td class="mono">03:27</td><td>schema v5 · integrity ok</td></tr>
+                    <tr><td class="primary-text">knowledge_base</td><td><span class="tag ok">ok</span></td><td class="mono">03:27</td><td>26 articles · collection ready</td></tr>
+                    <tr><td class="primary-text">runtime</td><td><span class="tag ok">ok</span></td><td class="mono">03:18</td><td>uvicorn · lifespan ready</td></tr>
+                    <tr><td class="primary-text">startup_collection</td><td><span class="tag warn">partial</span></td><td class="mono">03:18</td><td>6 success · 2 failed · 1 skipped</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title"><span class="dot" style="background:var(--amber);box-shadow:0 0 9px rgba(245,185,76,.5)"></span>启动采集状态</div>
+                <span class="tag warn">partial</span>
+              </div>
+              <div class="meta-grid">
+                <div class="meta-item"><div class="meta-label">批次</div><div class="meta-value mono">run_534d8cb9…</div></div>
+                <div class="meta-item"><div class="meta-label">设备</div><div class="meta-value">9 台 · 6 成功</div></div>
+                <div class="meta-item"><div class="meta-label">SSH 命令</div><div class="meta-value">42 / 42 成功</div></div>
+                <div class="meta-item"><div class="meta-label">连通性</div><div class="meta-value" style="color:var(--red)">0 / 2 成功</div></div>
+              </div>
+              <div class="divider"></div>
+              <div class="stack">
+                <div class="policy-row">
+                  <div class="policy-icon" style="color:var(--red);background:var(--red-dim)">!</div>
+                  <div class="policy-main"><div class="policy-title">BR-A-PC · ping 超时</div><div class="policy-desc">源终端 ping HQ-SRV 超时 10s；不影响 SSH 采集。</div></div>
+                </div>
+                <div class="policy-row">
+                  <div class="policy-icon" style="color:var(--red);background:var(--red-dim)">!</div>
+                  <div class="policy-main"><div class="policy-title">BR-B-PC · ping 超时</div><div class="policy-desc">与分支 A 同时出现，建议结合拓扑排查业务链路。</div></div>
+                </div>
+                <div class="policy-row">
+                  <div class="policy-icon">i</div>
+                  <div class="policy-main"><div class="policy-title">HQ-SRV · skipped</div><div class="policy-desc">无管理通道；显示“未采集”，不推断为故障。</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="banner info mt-12">
+            <span class="b-icon">i</span>
+            <div><strong>单进程约束：</strong>启动采集是进程内后台线程；不要用多个 Uvicorn worker 同时执行采集，也不要并行重建同一个 Chroma 集合。</div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-gov-panel="audit">
+          <div class="filter-bar">
+            <input class="field field-lg" placeholder="搜索操作者 / 动作 / 目标…" oninput="filterAudit(this.value)" />
+            <select class="select"><option>全部动作</option><option>诊断</option><option>变更</option><option>知识库</option><option>采集</option></select>
+            <select class="select"><option>最近 24 小时</option><option>最近 7 天</option><option>全部</option></select>
+            <span class="result-count" id="auditCount">共 6 条</span>
+          </div>
+          <div class="card flush">
+            <div class="table-wrap">
+              <table class="table-dense" id="auditTable">
+                <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>摘要</th><th style="text-align:right">详情</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">10-20 04:18</td><td>admin</td><td><span class="tag accent">change.create</span></td><td class="mono">CHG-20261020-004</td><td>关联 DIAG-128 · BR-A-R2</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                  <tr><td class="mono">10-20 04:12</td><td>web</td><td><span class="tag violet">diagnosis.run</span></td><td class="mono">DIAG-128</td><td>qwen-plus · KB enabled · 4.2s</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                  <tr><td class="mono">10-20 03:27</td><td>indexer</td><td><span class="tag ok">knowledge.index.publish</span></td><td class="mono">kbindex_f7a5…</td><td>26 articles · bge-small-zh-v1.5</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                  <tr><td class="mono">10-20 03:18</td><td>system</td><td><span class="tag">collection.run.publish</span></td><td class="mono">run_534d8cb9…</td><td>6 success · 2 failed · 1 skipped</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                  <tr><td class="mono">10-20 02:57</td><td>system</td><td><span class="tag plain">db.migrate.v5</span></td><td class="mono">data/ops.db</td><td>pre-v5 备份已生成</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                  <tr><td class="mono">10-19 19:27</td><td>admin</td><td><span class="tag ok">report.export</span></td><td class="mono">DIAG-121</td><td>Markdown · 含证据附件</td><td><div class="cell-actions"><button class="btn sm">展开</button></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-note"><span>审计日志只追加；默认保留 365 天且不自动删除。</span><span>详情含 request_id 与 JSON 负载</span></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-gov-panel="retention">
+          <div class="grid cols-2">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title"><span class="dot"></span>保留策略</div>
+                <span class="tag ok">3 条启用</span>
+              </div>
+              <div class="policy-row">
+                <div class="policy-icon">H</div>
+                <div class="policy-main"><div class="policy-title">健康检查保留 90 天</div><div class="policy-desc">health_checks · delete · 90 天前记录可清理</div></div>
+                <span class="tag ok">启用</span>
+              </div>
+              <div class="policy-row">
+                <div class="policy-icon">R</div>
+                <div class="policy-main"><div class="policy-title">孤立原始数据保留 180 天</div><div class="policy-desc">raw_blobs · delete_orphan · 仅删除无业务引用的内容</div></div>
+                <span class="tag ok">启用</span>
+              </div>
+              <div class="policy-row">
+                <div class="policy-icon" style="color:var(--amber);background:var(--amber-dim)">A</div>
+                <div class="policy-main"><div class="policy-title">审计日志保留 365 天（仅统计）</div><div class="policy-desc">audit_log · dry_run · 不自动删除审计</div></div>
+                <span class="tag warn">dry-run</span>
+              </div>
+              <div class="banner warn" style="margin-top:10px"><span class="b-icon">!</span><div><strong>Apply 只清理允许的数据。</strong>审计与业务证据不会因默认策略被删除；执行摘要写入 <span class="mono">maintenance_runs</span>。</div></div>
+              <div class="row" style="margin-top:10px">
+                <button class="btn" onclick="toast('已执行 dry-run（设计演示）')">Dry-run 统计</button>
+                <button class="btn danger" onclick="openModal('confirmModal')">Apply</button>
+              </div>
+            </div>
+
+            <div class="card flush">
+              <div class="card-head" style="padding:13px 15px 0;margin-bottom:9px">
+                <div class="card-title"><span class="dot"></span>最近维护运行</div>
+                <span class="tag plain">maintenance_runs</span>
+              </div>
+              <div class="table-wrap">
+                <table class="table-dense">
+                  <thead><tr><th>任务</th><th>状态</th><th>候选</th><th>删除</th><th>时间</th></tr></thead>
+                  <tbody>
+                    <tr><td class="primary-text">retention</td><td><span class="tag ok">dry_run</span></td><td>12</td><td>0</td><td class="mono">10-20 03:30</td></tr>
+                    <tr><td class="primary-text">retention</td><td><span class="tag ok">dry_run</span></td><td>8</td><td>0</td><td class="mono">10-19 19:27</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-note"><span>默认只统计，显式 --apply 才删除</span><span>审计只统计</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-gov-panel="access">
+          <div class="banner warn" style="margin-bottom:10px">
+            <span class="b-icon">!</span>
+            <div><strong>安全边界：</strong>模型只会生成建议。系统不包含自动下发配置变更的代码路径；自动设备命令仅限白名单只读命令，人工变更必须审批、备份、记录与复测。</div>
+          </div>
+
+          <div class="grid cols-2">
+            <div class="card flush">
+              <div class="card-head" style="padding:13px 15px 0;margin-bottom:9px">
+                <div class="card-title"><span class="dot"></span>角色与权限</div>
+                <span class="tag warn">RBAC 可选</span>
+              </div>
+              <div class="table-wrap">
+                <table class="table-dense role-table">
+                  <thead><tr><th>角色</th><th>诊断</th><th>创建变更</th><th>审批</th><th>执行</th><th>读取审计</th></tr></thead>
+                  <tbody>
+                    <tr><td>admin</td><td class="role-check">✓</td><td class="role-check">✓</td><td class="role-check">✓</td><td class="role-check">✓</td><td class="role-check">✓</td></tr>
+                    <tr><td>operator</td><td class="role-check">✓</td><td class="role-check">✓</td><td class="role-deny">—</td><td class="role-check">✓</td><td class="role-check">✓</td></tr>
+                    <tr><td>approver</td><td class="role-check">✓</td><td class="role-deny">—</td><td class="role-check">✓</td><td class="role-deny">—</td><td class="role-check">✓</td></tr>
+                    <tr><td>viewer</td><td class="role-check">✓</td><td class="role-deny">—</td><td class="role-deny">—</td><td class="role-deny">—</td><td class="role-check">✓</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-note"><span>当前 APP_RBAC_ENFORCE=false；外层仍是单口令 Token。</span><span>实验环境</span></div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title"><span class="dot" style="background:var(--green);box-shadow:0 0 9px rgba(62,213,152,.5)"></span>命令边界</div>
+                <span class="tag ok">白名单</span>
+              </div>
+              <div class="stack">
+                <div class="context-card">
+                  <div class="cc-head"><span class="status-text ok"><span class="status-dot ok"></span>只读自动执行</span><span class="mono">42 条</span></div>
+                  <div class="cc-title">show / display / ping / traceroute</div>
+                  <div class="cc-body">采集与工具网关可用；命中 command_policies 与白名单后才执行。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span class="status-text danger"><span class="status-dot danger"></span>写配置 / 高风险</span><span class="tag danger">人工</span></div>
+                  <div class="cc-title">configure terminal · no shutdown · ACL / route 变更</div>
+                  <div class="cc-body">永不自动下发；只能作为变更计划，由人工执行后录入实际命令与输出。</div>
+                </div>
+                <div class="context-card">
+                  <div class="cc-head"><span>运行开关</span><span class="tag plain">只读演示</span></div>
+                  <div class="cc-body">APP_RBAC_ENFORCE=false · APP_ENABLE_DOCS=false · 单进程采集 · 敏感字段脱敏后进入日志与模型上下文。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-12">
+            <div class="card-head">
+              <div class="card-title"><span class="dot"></span>不可变不变量</div>
+              <span class="tag accent">实现时必须保持</span>
+            </div>
+            <div class="grid cols-3">
+              <div class="context-card"><div class="cc-title">证据优先</div><div class="cc-body">不得把模型输出当作设备事实；证据必须来自已发布采集项与状态观测。</div></div>
+              <div class="context-card"><div class="cc-title">人工变更</div><div class="cc-body">不得新增自动配置下发路径；审批、备份、执行记录、复测缺一不可。</div></div>
+              <div class="context-card"><div class="cc-title">可追溯</div><div class="cc-body">审计只追加；检索命中可回到文章版本与索引版本；报告含证据时间戳。</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ================= 设备详情抽屉 ================= -->
+<aside class="drawer" id="deviceDrawer" aria-label="设备详情">
+  <div class="drawer-head">
+    <div>
+      <div class="drawer-title" id="deviceDrawerTitle">设备详情</div>
+      <div class="drawer-sub" id="deviceDrawerSub">当前状态与采集历史</div>
+    </div>
+    <button class="close-btn" onclick="closeOverlays()" aria-label="关闭">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="row mb-10" id="deviceStatusRow">
+      <span class="tag ok">可达</span><span class="tag">Cisco IOSv</span><span class="tag">分支A</span>
+    </div>
+    <div class="card" style="padding:12px">
+      <div class="meta-grid" id="deviceMeta">
+        <div class="meta-item"><div class="meta-label">管理地址</div><div class="meta-value mono">192.168.249.12</div></div>
+        <div class="meta-item"><div class="meta-label">角色</div><div class="meta-value">分支A路由器</div></div>
+        <div class="meta-item"><div class="meta-label">最近采集</div><div class="meta-value mono">2026-10-20 03:18</div></div>
+        <div class="meta-item"><div class="meta-label">采集批次</div><div class="meta-value mono">run_534d8cb9…</div></div>
+      </div>
+    </div>
+
+    <div class="tabs mt-12" id="deviceDrawerTabs">
+      <button class="tab active" data-device-tab="current" onclick="switchDeviceTab('current')">当前状态</button>
+      <button class="tab" data-device-tab="history" onclick="switchDeviceTab('history')">采集历史</button>
+      <button class="tab" data-device-tab="raw" onclick="switchDeviceTab('raw')">原始输出</button>
+    </div>
+    <div class="tab-panel active" data-device-panel="current">
+      <div class="banner info mb-10"><span class="b-icon">i</span><div>仅展示最近一次<strong>已发布</strong>采集事实；失败或未采集不会回填历史成功状态。</div></div>
+      <div class="stack" id="deviceFacts">
+        <div class="context-card">
+          <div class="cc-head"><span>接口</span><span class="tag warn">1 / 2 UP</span></div>
+          <div class="cc-title">GigabitEthernet0/1 · down/down</div>
+          <div class="cc-body">接口描述 to BR-A-SW2；物理与协议状态均 down。</div>
+        </div>
+        <div class="context-card">
+          <div class="cc-head"><span>路由</span><span class="tag ok">18 条</span></div>
+          <div class="cc-title">默认路由存在</div>
+          <div class="cc-body">路由表来自 state_observations.route，观测时间 03:18。</div>
+        </div>
+      </div>
+    </div>
+    <div class="tab-panel" data-device-panel="history">
+      <div class="table-wrap card flush">
+        <table class="table-dense">
+          <thead><tr><th>批次</th><th>状态</th><th>采集项</th><th>时间</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">run_534d8cb9…</td><td><span class="tag ok">success</span></td><td>SSH 7 · SNMP 1</td><td class="mono">03:18</td></tr>
+            <tr><td class="mono">run_0739f60d…</td><td><span class="tag ok">success</span></td><td>SSH 7 · SNMP 1</td><td class="mono">00:57</td></tr>
+            <tr><td class="mono">run_migration…</td><td><span class="tag plain">legacy</span></td><td>历史记录</td><td class="mono">10-19</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tab-panel" data-device-panel="raw">
+      <div class="code"><span class="cmt"># 示例：已脱敏的原始输出</span>
+GigabitEthernet0/1 is down, line protocol is down
+  Hardware is iGbE, address is 5254.00a1.0002
+  Description: to BR-A-SW2
+  MTU 1500 bytes, BW 1000000 Kbit/sec
+  <span class="key">duplex</span>: <span class="str">auto</span>, <span class="key">speed</span>: <span class="str">auto</span>
+  <span class="key">input errors</span>: 0, <span class="key">output errors</span>: 0</div>
+      <div class="banner warn mt-12"><span class="b-icon">!</span><div>原始输出只对授权操作者展示；密钥、community 与口令在入库前脱敏。</div></div>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn" onclick="go('diagnosis');closeOverlays()">用于诊断</button>
+    <button class="btn primary" onclick="toast('已打开完整采集详情（设计演示）')">完整采集详情</button>
+  </div>
+</aside>
+
+<!-- ================= 采集批次详情抽屉 ================= -->
+<aside class="drawer" id="collectionDrawer" aria-label="采集批次详情">
+  <div class="drawer-head">
+    <div>
+      <div class="drawer-title">采集详情 · 部分成功</div>
+      <div class="drawer-sub mono" id="collectionDrawerRun">run_534d8cb9c73c484fb69c16822f916f50</div>
+    </div>
+    <button class="close-btn" onclick="closeOverlays()" aria-label="关闭">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="health-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div class="health-item"><div class="hi-top"><span>设备</span><span class="status-text warn"><span class="status-dot warn"></span>partial</span></div><div class="hi-value">6 / 9 成功</div><div class="hi-meta">2 失败 · 1 跳过</div></div>
+      <div class="health-item"><div class="hi-top"><span>SSH 命令</span><span class="status-text ok"><span class="status-dot ok"></span>42/42</span></div><div class="hi-value">0 失败</div><div class="hi-meta">SNMP 6 台成功</div></div>
+      <div class="health-item"><div class="hi-top"><span>连通性</span><span class="status-text danger"><span class="status-dot danger"></span>0/2</span></div><div class="hi-value">2 超时</div><div class="hi-meta">BR-A-PC / BR-B-PC</div></div>
+      <div class="health-item"><div class="hi-top"><span>耗时</span><span class="tag plain">published</span></div><div class="hi-value">41s</div><div class="hi-meta">03:17:20 → 03:18:01</div></div>
+    </div>
+
+    <div class="card-head" style="margin:14px 0 8px">
+      <div class="card-title"><span class="dot"></span>设备结果</div>
+      <span class="tag plain">9 台</span>
+    </div>
+    <div class="table-wrap card flush">
+      <table class="table-dense">
+        <thead><tr><th>设备</th><th>总体状态</th><th>可达性</th><th>错误 / 备注</th></tr></thead>
+        <tbody>
+          <tr><td class="primary-text">BR-A-PC</td><td><span class="tag danger">failed</span></td><td><span class="status-text danger"><span class="status-dot danger"></span>unreachable</span></td><td>源终端 ping 超时 10s</td></tr>
+          <tr><td class="primary-text">BR-A-R2</td><td><span class="tag ok">success</span></td><td><span class="status-text ok"><span class="status-dot ok"></span>reachable</span></td><td class="dim">7 SSH · 1 SNMP</td></tr>
+          <tr><td class="primary-text">BR-A-SW2</td><td><span class="tag ok">success</span></td><td><span class="status-text ok"><span class="status-dot ok"></span>reachable</span></td><td class="dim">7 SSH · 1 SNMP</td></tr>
+          <tr><td class="primary-text">BR-B-PC</td><td><span class="tag danger">failed</span></td><td><span class="status-text danger"><span class="status-dot danger"></span>unreachable</span></td><td>源终端 ping 超时 10s</td></tr>
+          <tr><td class="primary-text">HQ-SRV</td><td><span class="tag plain">skipped</span></td><td><span class="status-text unknown"><span class="status-dot unknown"></span>unknown</span></td><td>无管理通道；不代表故障</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card-head" style="margin:14px 0 8px">
+      <div class="card-title"><span class="dot"></span>批次摘要</div>
+      <span class="tag ok">已发布</span>
+    </div>
+    <div class="code"><span class="key">trigger_type</span>: <span class="str">"startup"</span>
+<span class="key">device_count</span>: <span class="str">9</span>
+<span class="key">ssh_commands_success</span>: <span class="str">42</span>
+<span class="key">ssh_commands_failed</span>: <span class="str">0</span>
+<span class="key">snmp_devices_success</span>: <span class="str">6</span>
+<span class="key">connectivity_tests</span>: <span class="str">2</span>
+<span class="key">connectivity_failures</span>: <span class="str">2</span>
+<span class="key">published_at_utc</span>: <span class="str">"2026-10-19T19:18:01+00:00"</span></div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn" onclick="toast('导出批次证据（设计演示）')">导出证据</button>
+    <button class="btn primary" onclick="go('diagnosis');closeOverlays()">用于诊断</button>
+  </div>
+</aside>
+
+<!-- ================= 创建变更弹窗 ================= -->
+<div class="modal-mask" id="changeModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h3>创建人工变更</h3>
+        <div class="drawer-sub">关联 DIAG-128 · 所有字段会在提交后写入 change_requests</div>
+      </div>
+      <button class="close-btn" onclick="closeModal('changeModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="banner warn mb-10"><span class="b-icon">!</span><div>模型建议不会自动执行。创建后仍需审批、配置备份、人工执行记录与真实复测。</div></div>
+      <div class="grid cols-2">
+        <div>
+          <div class="meta-label">目标设备</div>
+          <input class="field" style="width:100%" value="BR-A-R2" />
+        </div>
+        <div>
+          <div class="meta-label">变更类型</div>
+          <select class="select" style="width:100%"><option>physical + software</option><option>physical</option><option>software</option></select>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <div class="meta-label">变更标题</div>
+        <input class="field" style="width:100%" value="恢复 BR-A-R2 Gi0/1 上联链路" />
+      </div>
+      <div style="margin-top:10px">
+        <div class="meta-label">说明与回滚方案</div>
+        <textarea class="textarea">先现场检查线缆/光模块，再人工确认端口状态；如执行配置恢复，使用备份配置回滚。</textarea>
+      </div>
+      <div class="grid cols-2" style="margin-top:10px">
+        <div>
+          <div class="meta-label">风险级别</div>
+          <select class="select" style="width:100%"><option>中风险</option><option>低风险</option><option>高风险</option></select>
+        </div>
+        <div>
+          <div class="meta-label">申请人</div>
+          <input class="field" style="width:100%" value="admin" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('changeModal')">取消</button>
+      <button class="btn primary" onclick="closeModal('changeModal');toast('变更请求已创建（设计演示）')">创建变更请求</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 二次确认弹窗 ================= -->
+<div class="modal-mask" id="confirmModal">
+  <div class="modal" style="width:min(440px,100%)">
+    <div class="modal-head">
+      <h3>确认执行 Apply？</h3>
+      <button class="close-btn" onclick="closeModal('confirmModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="banner danger"><span class="b-icon">!</span><div>该操作会删除符合保留策略的过期健康检查与孤立原始数据。审计日志只统计、不删除。设计稿中不执行真实删除。</div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('confirmModal')">取消</button>
+      <button class="btn danger" onclick="closeModal('confirmModal');toast('设计演示：未执行删除')">确认 Apply</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeOverlays()"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+  const pageTitles = {
+    overview: '总览',
+    assets: '资产与采集',
+    diagnosis: '诊断中心',
+    changes: '变更与复测',
+    knowledge: '知识与评测',
+    governance: '审计与设置'
+  };
+
+  function go(page) {
+    document.querySelectorAll('.page').forEach(el => el.classList.toggle('active', el.id === 'page-' + page));
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
+    const crumb = document.getElementById('crumbPage');
+    if (crumb) crumb.textContent = pageTitles[page] || page;
+    document.getElementById('content').scrollTop = 0;
+    document.getElementById('sidebar').classList.remove('open');
+    history.replaceState(null, '', '#' + page);
+  }
+
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => go(item.dataset.page));
+  });
+
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+  }
+
+  function switchAssetTab(name) {
+    document.querySelectorAll('[data-asset-tab]').forEach(el => el.classList.toggle('active', el.dataset.assetTab === name));
+    document.querySelectorAll('[data-asset-panel]').forEach(el => el.classList.toggle('active', el.dataset.assetPanel === name));
+  }
+
+  function filterDevices(query) {
+    const q = (query || document.querySelector('#page-assets .filter-bar input')?.value || '').toLowerCase();
+    const rows = document.querySelectorAll('#deviceTable tbody tr');
+    let visible = 0;
+    rows.forEach(row => {
+      const show = !q || row.textContent.toLowerCase().includes(q);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    const count = document.getElementById('deviceCount');
+    if (count) count.textContent = `共 ${visible} 台设备`;
+  }
+
+  let toastTimer;
+  function toast(message) {
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  }
+
+  function openDrawer(id) {
+    document.querySelectorAll('.drawer').forEach(el => el.classList.remove('show'));
+    document.getElementById(id)?.classList.add('show');
+    document.getElementById('scrim').classList.add('show');
+  }
+  function closeOverlays() {
+    document.querySelectorAll('.drawer').forEach(el => el.classList.remove('show'));
+    document.querySelectorAll('.modal-mask').forEach(el => el.classList.remove('show'));
+    document.getElementById('scrim').classList.remove('show');
+  }
+  function openModal(id) {
+    document.getElementById('scrim').classList.add('show');
+    document.getElementById(id)?.classList.add('show');
+  }
+  function closeModal(id) {
+    document.getElementById(id)?.classList.remove('show');
+    if (!document.querySelector('.drawer.show')) document.getElementById('scrim').classList.remove('show');
+  }
+  const DEVICES = {
+    'BR-A-R2': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSv', '分支A路由器'],
+      ip: '192.168.249.12', role: '分支A路由器', last: '2026-10-20 03:18',
+      facts: [
+        ['接口', '1 / 2 UP', 'warn', 'GigabitEthernet0/1 · down/down', '接口描述 to BR-A-SW2；物理与协议状态均 down。'],
+        ['路由', '18 条', 'ok', '默认路由存在', '路由表来自 state_observations.route，观测时间 03:18。']
+      ]
+    },
+    'BR-A-SW2': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSvL2', '分支A交换机'],
+      ip: '192.168.249.15', role: '分支A交换机', last: '2026-10-20 03:18',
+      facts: [
+        ['接口', '1 / 2 UP', 'warn', 'GigabitEthernet0/0 · down/down', '上联端口异常；VLAN 10 仍存在，需结合对端 R2 Gi0/1 判断。'],
+        ['VLAN', 'VLAN 10', 'ok', '接入 VLAN 正常', '台账预期 VLAN 10；未发现额外 VLAN 20 漂移。']
+      ]
+    },
+    'BR-A-PC': {
+      status: '不可达', cls: 'danger', tags: ['不可达', 'VPCS / Linux', '分支A测试终端'],
+      ip: '192.168.20.100', role: '分支A测试终端', last: '2026-10-20 03:18',
+      facts: [
+        ['连通性', '100% loss', 'danger', 'BR-A-PC → HQ-SRV 超时', '源终端 ping 192.168.10.100 超时 10s；与 R2/SW2 链路 down 一致。'],
+        ['管理通道', 'SSH 不可用', 'warn', '采集结果为 unreachable', '不可达不会被解释为设备故障；需要现场确认终端电源与地址。']
+      ]
+    },
+    'BR-B-R3': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSv', '分支B路由器'],
+      ip: '192.168.249.13', role: '分支B路由器', last: '2026-10-20 03:18',
+      facts: [['接口', '2 / 2 UP', 'ok', 'Gi0/0 · Gi0/1 均 up/up', '接口状态正常；与总部 WAN 链路可达。'], ['路由', '18 条', 'ok', '默认路由存在', '路由表完整，未见缺省路由缺失。']]
+    },
+    'BR-B-SW3': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSvL2', '分支B交换机'],
+      ip: '192.168.249.16', role: '分支B交换机', last: '2026-10-20 03:18',
+      facts: [['接口', '2 / 2 UP', 'ok', 'Gi0/0 · Gi0/1 均 up/up', '上联与终端端口均正常。'], ['VLAN', 'VLAN 10', 'ok', '接入 VLAN 正常', 'VLAN 10 存在，未见端口漂移。']]
+    },
+    'BR-B-PC': {
+      status: '不可达', cls: 'danger', tags: ['不可达', 'VPCS / Linux', '分支B测试终端'],
+      ip: '192.168.30.100', role: '分支B测试终端', last: '2026-10-20 03:18',
+      facts: [['连通性', '100% loss', 'danger', 'BR-B-PC → HQ-SRV 超时', '源终端 ping 超时 10s；需与分支B链路状态联合判断。'], ['管理通道', 'SSH 不可用', 'warn', '采集结果为 unreachable', '不代表设备硬件故障；需现场确认。']]
+    },
+    'HQ-R1': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSv', '总部核心路由器'],
+      ip: '192.168.249.11', role: '总部核心路由器', last: '2026-10-20 03:18',
+      facts: [['接口', '3 / 3 UP', 'ok', 'Gi0/0 · Gi0/1 · Gi0/2', '总部核心接口均 up/up。'], ['路由', '24 条', 'ok', 'WAN 路由完整', '与分支A/B 的 WAN 链路均可达。']]
+    },
+    'HQ-SW1': {
+      status: '可达', cls: 'ok', tags: ['可达', 'Cisco IOSvL2', '总部核心交换机'],
+      ip: '192.168.249.14', role: '总部核心交换机', last: '2026-10-20 03:18',
+      facts: [['接口', '3 / 3 UP', 'ok', 'Gi0/0 · Gi0/1 · Gi0/2', '总部核心接口均 up/up。'], ['VLAN', 'VLAN 10 / 20', 'ok', 'VLAN 正常', 'VLAN 10 与 20 均存在，端口分配符合台账。']]
+    },
+    'HQ-SRV': {
+      status: '未采集', cls: 'unknown', tags: ['未采集', 'VPCS / Linux', '总部服务器终端'],
+      ip: '192.168.10.100', role: '总部服务器终端', last: '—',
+      facts: [['采集', 'skipped', 'unknown', '无管理通道', '未配置 SSH/SNMP 采集通道，页面显示“未采集”而不是“故障”。'], ['证据提示', '不可推断', 'warn', '不能据此判断服务器宕机', '如需诊断服务器，应补充可达性测试或管理通道。']]
+    }
+  };
+
+  function openDevice(name) {
+    const d = DEVICES[name] || DEVICES['BR-A-R2'];
+    document.getElementById('deviceDrawerTitle').textContent = '设备详情 · ' + name;
+    document.getElementById('deviceDrawerSub').textContent = d.status + ' · ' + d.role + ' · 最近采集 ' + d.last;
+    document.getElementById('deviceStatusRow').innerHTML = d.tags.map((t, i) =>
+      `<span class="tag ${i === 0 ? (d.cls === 'ok' ? 'ok' : d.cls === 'danger' ? 'danger' : 'plain') : ''}">${t}</span>`
+    ).join('');
+    document.getElementById('deviceMeta').innerHTML = `
+      <div class="meta-item"><div class="meta-label">管理地址</div><div class="meta-value mono">${d.ip}</div></div>
+      <div class="meta-item"><div class="meta-label">角色</div><div class="meta-value">${d.role}</div></div>
+      <div class="meta-item"><div class="meta-label">最近采集</div><div class="meta-value mono">${d.last}</div></div>
+      <div class="meta-item"><div class="meta-label">采集批次</div><div class="meta-value mono">run_534d8cb9…</div></div>`;
+    document.getElementById('deviceFacts').innerHTML = d.facts.map(f => `
+      <div class="context-card">
+        <div class="cc-head"><span>${f[0]}</span><span class="tag ${f[2]}">${f[1]}</span></div>
+        <div class="cc-title">${f[3]}</div>
+        <div class="cc-body">${f[4]}</div>
+      </div>`).join('');
+    openDrawer('deviceDrawer');
+  }
+
+  function switchDeviceTab(name) {
+    document.querySelectorAll('[data-device-tab]').forEach(el => el.classList.toggle('active', el.dataset.deviceTab === name));
+    document.querySelectorAll('[data-device-panel]').forEach(el => el.classList.toggle('active', el.dataset.devicePanel === name));
+  }
+  function openCollection(runId) {
+    const el = document.getElementById('collectionDrawerRun');
+    if (el) el.textContent = runId;
+    openDrawer('collectionDrawer');
+  }
+
+  function openChangeModal() {
+    openModal('changeModal');
+  }
+
+  function newDiagnosis() {
+    const input = document.getElementById('diagComposer');
+    if (input) { input.value = ''; input.focus(); }
+    toast('已准备新诊断会话（设计演示）');
+  }
+
+  function selectSession(el, id) {
+    toast('会话 ' + id + ' 的详情为设计演示，当前展示 DIAG-128');
+  }
+
+  function filterSessions(query) {
+    const q = (query || '').toLowerCase();
+    document.querySelectorAll('.session-item').forEach(item => {
+      item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+
+  function switchContext(name) {
+    document.querySelectorAll('[data-ctx]').forEach(el => el.classList.toggle('active', el.dataset.ctx === name));
+    document.querySelectorAll('[data-ctx-panel]').forEach(el => el.classList.toggle('active', el.dataset.ctxPanel === name));
+  }
+
+  function sendDiag() {
+    const input = document.getElementById('diagComposer');
+    const text = (input.value || '').trim();
+    if (!text) { toast('请输入问题或补充信息'); return; }
+    const scroll = document.getElementById('chatScroll');
+    const msg = document.createElement('div');
+    msg.className = 'msg-user';
+    msg.style.marginTop = '12px';
+    msg.innerHTML = `${text.replace(/</g, '&lt;')}<div class="msg-meta">你 · 刚刚</div>`;
+    scroll.appendChild(msg);
+    input.value = '';
+    scroll.scrollTop = scroll.scrollHeight;
+    setTimeout(() => toast('设计稿仅演示交互，不调用模型'), 320);
+  }
+
+  function selectChange(el) {
+    toast('变更详情为设计演示，当前展示 CHG-20261020-004');
+  }
+
+  function switchKnowledgeTab(name) {
+    document.querySelectorAll('[data-knowledge-tab]').forEach(el => el.classList.toggle('active', el.dataset.knowledgeTab === name));
+    document.querySelectorAll('[data-knowledge-panel]').forEach(el => el.classList.toggle('active', el.dataset.knowledgePanel === name));
+  }
+
+  function filterArticles(query) {
+    const q = (query || '').toLowerCase();
+    const rows = document.querySelectorAll('#articleTable tbody tr');
+    let visible = 0;
+    rows.forEach(row => {
+      const show = !q || row.textContent.toLowerCase().includes(q);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    const count = document.getElementById('articleCount');
+    if (count) count.textContent = visible + ' 篇';
+  }
+
+  function selectArticle(id) {
+    toast('文章 ' + id + ' 的预览为设计演示，当前展示 KB-IF-001');
+  }
+
+  function switchGovernanceTab(name) {
+    document.querySelectorAll('[data-gov-tab]').forEach(el => el.classList.toggle('active', el.dataset.govTab === name));
+    document.querySelectorAll('[data-gov-panel]').forEach(el => el.classList.toggle('active', el.dataset.govPanel === name));
+  }
+
+  function filterAudit(query) {
+    const q = (query || '').toLowerCase();
+    const rows = document.querySelectorAll('#auditTable tbody tr');
+    let visible = 0;
+    rows.forEach(row => {
+      const show = !q || row.textContent.toLowerCase().includes(q);
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    const count = document.getElementById('auditCount');
+    if (count) count.textContent = '共 ' + visible + ' 条';
+  }
+
+  function applyHash() {
+    const hash = (location.hash || '').replace('#', '');
+    if (hash && pageTitles[hash]) go(hash);
+    const params = new URLSearchParams(location.search);
+    if (params.get('knowledge') === 'eval') switchKnowledgeTab('eval');
+    if (params.get('gov') === 'audit') switchGovernanceTab('audit');
+    if (params.get('gov') === 'retention') switchGovernanceTab('retention');
+    if (params.get('gov') === 'access') switchGovernanceTab('access');
+  }
+  window.addEventListener('hashchange', applyHash);
+  applyHash();
+</script>
+</body>
+</html>
