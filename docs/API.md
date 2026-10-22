@@ -97,11 +97,14 @@ Cookie: netops_token=<APP_API_TOKEN>
 | POST | `/api/v1/terminal/sessions` | 创建人工终端会话 |
 | GET | `/api/v1/terminal/sessions/{session_id}` | 读取会话 |
 | POST | `/api/v1/terminal/sessions/{session_id}/commands` | 执行命令并审计 |
+| POST | `/api/v1/terminal/sessions/{session_id}/write-intents` | 为写命令签发一次性确认令牌 |
 | POST | `/api/v1/terminal/sessions/{session_id}/backup` | 备份当前配置 |
 | POST | `/api/v1/terminal/sessions/{session_id}/close` | 关闭会话 |
 | GET | `/api/v1/terminal/history/{device_name}` | 终端历史 |
 
 创建终端必须提交 `backup_acknowledged=true`。快速操作还必须提交 `confirmed=true`。
+写命令必须在 `backup_status=completed` 后调用 `write-intents` 获取一次性
+`confirmation_id`，再随命令提交；令牌绑定会话、命令哈希并有短有效期。
 
 ## 4. 旧版兼容接口
 

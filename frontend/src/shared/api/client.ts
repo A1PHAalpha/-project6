@@ -370,7 +370,7 @@ export const api = {
     if (mockMode) {
       return delay({
         diagnosis_id: 128,
-        session_id: sessionId ?? "session_mock",
+        session_id: sessionId ?? mockSession.id,
         conclusion_id: "conclusion_mock",
         question,
         model_id: "qwen-plus",

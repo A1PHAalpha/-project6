@@ -58,3 +58,20 @@ def test_export_session_report_unknown_session_returns_404(tmp_path, monkeypatch
     with pytest.raises(ApiProblem) as exc:
         export_session_report("session_missing")
     assert exc.value.status == 404
+
+
+def test_export_session_report_existing_session_without_diagnosis_returns_404(
+    tmp_path, monkeypatch
+):
+    _seed_diagnosis(tmp_path, monkeypatch)
+    session_id = "session_without_diagnosis"
+    with db.get_conn() as conn:
+        conn.execute(
+            """INSERT INTO agent_sessions
+               (session_id, title, created_by, status, started_at_utc, updated_at_utc)
+               VALUES (?, ?, ?, 'active', ?, ?)""",
+            (session_id, "empty", "test", db.now_iso(), db.now_iso()),
+        )
+    with pytest.raises(ApiProblem) as exc:
+        export_session_report(session_id)
+    assert exc.value.status == 404

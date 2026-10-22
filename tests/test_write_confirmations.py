@@ -6,8 +6,14 @@ def test_confirmation_is_bound_to_session_and_command():
     issued = store.issue("term_1", "configure terminal")
     assert store.consume("term_1", "configure terminal", issued["confirmation_id"]) is True
     assert store.consume("term_1", "configure terminal", issued["confirmation_id"]) is False
-    assert store.consume("term_2", "configure terminal", issued["confirmation_id"]) is False
-    assert store.consume("term_1", "shutdown", issued["confirmation_id"]) is False
+
+    wrong_session = store.issue("term_1", "configure terminal")
+    assert store.consume("term_2", "configure terminal", wrong_session["confirmation_id"]) is False
+    assert store.consume("term_1", "configure terminal", wrong_session["confirmation_id"]) is True
+
+    wrong_command = store.issue("term_1", "configure terminal")
+    assert store.consume("term_1", "shutdown", wrong_command["confirmation_id"]) is False
+    assert store.consume("term_1", "configure terminal", wrong_command["confirmation_id"]) is True
 
 
 def test_expired_confirmation_is_rejected(monkeypatch):

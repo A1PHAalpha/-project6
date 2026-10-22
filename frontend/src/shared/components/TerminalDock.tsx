@@ -9,12 +9,10 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { looksLikeWriteCommand } from "../commandPolicy";
 import { useWorkspace } from "../state/workspace";
 import type { TerminalEvent, TerminalSession } from "../types";
 import { BackupReminder, ConfirmDialog } from "./ui";
-
-const writeCommandPattern =
-  /^(configure|conf t|interface|no shut|shutdown|write|copy run|vlan|switchport|ip route|access-list|router|erase|delete|reload)/i;
 
 export function TerminalDock() {
   const deviceName = useWorkspace((state) => state.terminalDeviceName);
@@ -93,7 +91,7 @@ export function TerminalDock() {
   async function dispatchCommand(rawCommand: string, source: "manual" | "quick_action" = "manual") {
     const trimmed = rawCommand.trim();
     if (!trimmed || !session) return;
-    const isWrite = writeCommandPattern.test(trimmed);
+    const isWrite = looksLikeWriteCommand(trimmed);
     if (isWrite && session.backupStatus !== "completed") {
       setError("写命令前必须先完成配置备份");
       return;
@@ -130,7 +128,7 @@ export function TerminalDock() {
   function submitCommand() {
     const trimmed = command.trim();
     if (!trimmed) return;
-    if (writeCommandPattern.test(trimmed)) {
+    if (looksLikeWriteCommand(trimmed)) {
       if (session?.backupStatus !== "completed") {
         setError("写命令前必须先完成配置备份");
         return;

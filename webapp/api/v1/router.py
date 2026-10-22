@@ -679,11 +679,24 @@ def _run_collection_job(job_id: str, device_names: list[str] | None, actor: str)
             requested_by=actor,
             source_ref=job_id,
         )
+        run = db.get_collection_run(result.get("run_id")) or {}
+        run_status = run.get("status", "success")
+        job_status = (
+            "success"
+            if run_status == "success"
+            else "partial"
+            if run_status == "partial"
+            else "failed"
+        )
         db.update_job(
             job_id,
-            status="success",
+            status=job_status,
             progress=100,
-            message="采集完成",
+            message={
+                "success": "采集完成",
+                "partial": "采集部分完成",
+                "failed": "采集失败",
+            }[job_status],
             result=result,
         )
     except Exception as exc:
@@ -892,6 +905,7 @@ def get_session(session_id: str):
 
 
 def _latest_diagnosis_id_for_session(session_id: str) -> int | None:
+    db.init_db()
     with db.get_conn() as conn:
         row = conn.execute(
             """SELECT id FROM diagnosis_records

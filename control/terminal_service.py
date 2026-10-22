@@ -177,10 +177,17 @@ class TerminalManager:
             raise TerminalError("TERMINAL_CLOSED", "终端会话已关闭")
 
         device = db.get_device(session["deviceName"], include_retired=False)
-        write = bool(
-            device
-            and is_write_command(device.get("device_type") or "", command)
-        )
+        if not device:
+            db.append_terminal_event(
+                session_id,
+                event_type="error",
+                source="system",
+                command_text=sanitize_text(command),
+                output_text="命令被拒绝：设备不存在或已退役",
+                exit_code=1,
+            )
+            raise TerminalError("DEVICE_NOT_FOUND", "设备不存在或已退役")
+        write = is_write_command(device.get("device_type") or "", command)
         if write:
             if session.get("backupStatus") != "completed":
                 db.append_terminal_event(
@@ -218,7 +225,10 @@ class TerminalManager:
             event_type="command",
             source=source,
             command_text=sanitize_text(command),
-            metadata={"confirmed": confirmed, "confirmation_used": write},
+            metadata={
+                "confirmed": bool(confirmed or write),
+                "confirmation_used": write,
+            },
         )
         started = time.monotonic()
         with runtime.lock:
@@ -291,9 +301,9 @@ class TerminalManager:
             backup_ref=result.get("backup_path"),
             message="设备配置备份已完成，可继续人工操作。",
         )
+        session = db.get_terminal_session(session_id) or {"id": session_id}
         return {
-            "session_id": session_id,
-            "status": "completed",
+            **session,
             "backup_ref": result.get("backup_path"),
             "sha256": result.get("sha256"),
         }
