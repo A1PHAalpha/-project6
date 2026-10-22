@@ -186,3 +186,38 @@ def test_collection_schedule_does_not_claim_scheduler(tmp_path, monkeypatch):
         api_v1.ScheduleUpdate(enabled=True, frequency_minutes=30)
     )
     assert updated["scheduler_available"] is False
+
+
+def test_terminal_write_confirmation_requires_completed_backup(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+    db.create_managed_device(
+        {
+            "name": "LAB-R1",
+            "site": "实验室",
+            "deviceType": "cisco_ios",
+            "managementIp": "192.0.2.30",
+        }
+    )
+    session = db.create_terminal_session(
+        "LAB-R1",
+        operator="tester",
+        backup_acknowledged=True,
+    )
+    with pytest.raises(TerminalError) as exc:
+        terminal_manager.request_write_confirmation(
+            session["id"],
+            "configure terminal",
+        )
+    assert exc.value.code == "TERMINAL_BACKUP_REQUIRED"
+
+    db.set_terminal_backup_result(
+        session["id"],
+        status="completed",
+        backup_ref="test-backup.cfg",
+        message="备份完成",
+    )
+    issued = terminal_manager.request_write_confirmation(
+        session["id"],
+        "configure terminal",
+    )
+    assert issued["confirmation_id"]

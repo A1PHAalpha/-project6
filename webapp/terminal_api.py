@@ -34,6 +34,23 @@ class TerminalCommandRequest(BaseModel):
     command: str = Field(min_length=1, max_length=4000)
     source: str = "manual"
     confirmed: bool = False
+    confirmation_id: str | None = None
+
+
+class WriteIntentRequest(BaseModel):
+    command: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/sessions/{session_id}/write-intents", status_code=201)
+def create_write_intent(session_id: str, payload: WriteIntentRequest):
+    try:
+        return terminal_manager.request_write_confirmation(session_id, payload.command)
+    except TerminalError as exc:
+        status = 409 if exc.code in (
+            "TERMINAL_BACKUP_REQUIRED",
+            "TERMINAL_CONFIRMATION_REQUIRED",
+        ) else 400
+        raise ApiProblem(status, exc.code, str(exc)) from exc
 
 
 @router.post("/sessions/{session_id}/commands")
@@ -44,10 +61,15 @@ def execute_terminal_command(session_id: str, payload: TerminalCommandRequest):
             payload.command,
             source=payload.source,
             confirmed=payload.confirmed,
+            confirmation_id=payload.confirmation_id,
         )
         return {"session_id": session_id, "events": events}
     except TerminalError as exc:
-        status = 409 if exc.code == "QUICK_ACTION_CONFIRMATION_REQUIRED" else 400
+        status = 409 if exc.code in (
+            "QUICK_ACTION_CONFIRMATION_REQUIRED",
+            "TERMINAL_BACKUP_REQUIRED",
+            "TERMINAL_CONFIRMATION_REQUIRED",
+        ) else 400
         raise ApiProblem(status, exc.code, str(exc)) from exc
 
 

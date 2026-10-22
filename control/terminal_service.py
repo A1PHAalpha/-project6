@@ -17,6 +17,8 @@ from netmiko import ConnectHandler
 
 from collector import db
 from control.backup_manager import backup_running_config
+from control.terminal_confirmations import WriteConfirmationStore
+from control.write_policy import is_write_command
 from project_config import load_project_env
 from rag_engine.sanitize import sanitize_text
 
@@ -43,6 +45,9 @@ class TerminalManager:
     def __init__(self) -> None:
         self._connections: dict[str, _Connection] = {}
         self._manager_lock = threading.Lock()
+        self._confirmations = WriteConfirmationStore(
+            ttl_seconds=int(os.getenv("TERMINAL_CONFIRM_TTL_SECONDS", "120"))
+        )
 
     def _connection_params(self, device: dict) -> dict:
         raw = db._json_value(device.get("raw_json")) or {}
@@ -126,6 +131,24 @@ class TerminalManager:
             )
         return db.get_terminal_session(session_id) or session
 
+    def request_write_confirmation(self, session_id: str, command: str) -> dict:
+        session = db.get_terminal_session(session_id)
+        if not session:
+            raise TerminalError("TERMINAL_NOT_FOUND", "终端会话不存在")
+        if session["status"] != "open":
+            raise TerminalError("TERMINAL_CLOSED", "终端会话已关闭")
+        if session.get("backupStatus") != "completed":
+            raise TerminalError(
+                "TERMINAL_BACKUP_REQUIRED",
+                "写命令前必须完成实际配置备份",
+            )
+        device = db.get_device(session["deviceName"], include_retired=False)
+        if not device:
+            raise TerminalError("DEVICE_NOT_FOUND", "设备不存在或已退役")
+        if not is_write_command(device.get("device_type") or "", command):
+            raise TerminalError("TERMINAL_NOT_WRITE_COMMAND", "该命令不是写命令")
+        return self._confirmations.issue(session_id, command)
+
     def execute(
         self,
         session_id: str,
@@ -133,6 +156,7 @@ class TerminalManager:
         *,
         source: str = "manual",
         confirmed: bool = False,
+        confirmation_id: str | None = None,
     ) -> list[dict]:
         command = (command or "").strip()
         if not command:
@@ -152,6 +176,41 @@ class TerminalManager:
         if not session or session["status"] != "open":
             raise TerminalError("TERMINAL_CLOSED", "终端会话已关闭")
 
+        device = db.get_device(session["deviceName"], include_retired=False)
+        write = bool(
+            device
+            and is_write_command(device.get("device_type") or "", command)
+        )
+        if write:
+            if session.get("backupStatus") != "completed":
+                db.append_terminal_event(
+                    session_id,
+                    event_type="error",
+                    source="system",
+                    command_text=sanitize_text(command),
+                    output_text="写命令被拒绝：未完成实际配置备份",
+                    exit_code=1,
+                )
+                raise TerminalError(
+                    "TERMINAL_BACKUP_REQUIRED",
+                    "写命令前必须完成实际配置备份",
+                )
+            if not confirmation_id or not self._confirmations.consume(
+                session_id, command, confirmation_id
+            ):
+                db.append_terminal_event(
+                    session_id,
+                    event_type="error",
+                    source="system",
+                    command_text=sanitize_text(command),
+                    output_text="写命令被拒绝：确认令牌无效、过期或已使用",
+                    exit_code=1,
+                )
+                raise TerminalError(
+                    "TERMINAL_CONFIRMATION_REQUIRED",
+                    "写命令需要有效的二次确认",
+                )
+
         # Write intent before sending to the device so even a transport failure
         # leaves a reconstruction trail.
         command_event = db.append_terminal_event(
@@ -159,7 +218,7 @@ class TerminalManager:
             event_type="command",
             source=source,
             command_text=sanitize_text(command),
-            metadata={"confirmed": confirmed},
+            metadata={"confirmed": confirmed, "confirmation_used": write},
         )
         started = time.monotonic()
         with runtime.lock:
@@ -240,6 +299,7 @@ class TerminalManager:
         }
 
     def close(self, session_id: str, *, reason: str = "operator_closed") -> dict:
+        self._confirmations.clear_session(session_id)
         with self._manager_lock:
             runtime = self._connections.pop(session_id, None)
         if runtime:
