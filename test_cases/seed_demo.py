@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +29,46 @@ def seed_demo(db_path: str | None = None, reset: bool = False) -> dict:
     db.init_db()
     if not db.list_devices():
         db.load_inventory(str(PROJECT_ROOT / "network" / "device_inventory.json"))
+
+    articles = json.loads(
+        (PROJECT_ROOT / "knowledge_base" / "articles.json").read_text(encoding="utf-8")
+    )["articles"]
+    catalog = db.sync_knowledge_catalog(articles)
+    index_id = db.begin_knowledge_index(
+        index_name="ops_knowledge_base",
+        collection_name="ops_knowledge_base",
+        model_name=os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"),
+        dimension=512,
+        cache_ref=os.getenv("FASTEMBED_CACHE_PATH"),
+        chroma_path=os.getenv("CHROMA_DB_PATH", "./data/chroma"),
+        content_hash="demo-seed",
+    )
+    db.finish_knowledge_index(
+        index_id,
+        status="ready",
+        article_count=len(articles),
+        content_hash="demo-seed",
+    )
+    article = next(item for item in articles if item["id"] == "KB-IF-002")
+    article_meta = catalog["KB-IF-002"]
+    retrieved_docs = [
+        {
+            "id": article["id"],
+            "title": article["title"],
+            "category": article["category"],
+            "applicable_device": article["applicable_device"],
+            "version": article["version"],
+            "source": article["source"],
+            "content": article["content"],
+            "distance": 0.42,
+            "rank": 1,
+            "content_hash": article_meta.get("content_hash"),
+            "article_version_id": article_meta.get("article_version_id"),
+            "index_version_id": index_id,
+            "source_url": article_meta.get("source_url"),
+            "applicable_platform": article_meta.get("applicable_platform"),
+        }
+    ]
 
     scenario = next(item for item in SCENARIOS if item["id"] == "LINK_DOWN_01")
     seed_scenario(scenario)
@@ -71,9 +113,9 @@ def seed_demo(db_path: str | None = None, reset: bool = False) -> dict:
             "missing_information": "无",
         },
         evidence=evidence,
-        retrieved_docs=[],
-        use_kb=False,
-        kb_status="disabled",
+        retrieved_docs=retrieved_docs,
+        use_kb=True,
+        kb_status="success",
         kb_error=None,
         response_time_ms=1,
         total_response_time_ms=1,

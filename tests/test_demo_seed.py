@@ -12,3 +12,6 @@ def test_seed_demo_creates_exportable_session(tmp_path, monkeypatch):
     assert dto["suggestion"]["canExecute"] is True
     assert dto["suggestion"]["targetDevice"] == "BR-A-R2"
     assert dto["evidence"]
+    assert dto["knowledge"]
+    catalog = db.knowledge_catalog_summary()
+    assert catalog["active_index"]["status"] == "ready"
