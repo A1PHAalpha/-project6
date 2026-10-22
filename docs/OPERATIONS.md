@@ -53,6 +53,10 @@ reports/              导出报告和配置备份
 Web 启动与真实设备采集已解耦。默认 Mock 启动不执行采集；真实模式下仍需要
 `APP_AUTO_COLLECT=true` 才会在启动时触发一次后台采集。
 
+采集计划页面当前只保存频率、时段、范围、并发、超时和重试配置，**不会自动执行调度**。
+默认计划开关为关闭；需要定时采集时请先使用手动采集，或由运维侧的任务调度器调用
+`collector.run_collect --trigger scheduled`。生产版调度器属于后续硬化项。
+
 手动采集：
 
 ```powershell
@@ -61,6 +65,10 @@ python -m collector.run_collect --devices BR-A-R2
 
 采集只自动执行白名单中的只读命令。设备不可达时记录失败或未知状态，不用历史成功状态
 补齐当前事实。
+
+人工终端的写命令要求两项前置条件：会话关联设备已完成实际配置备份
+（`backup_status=completed`），以及服务端签发的一次性确认令牌。只读命令不受备份门槛
+限制，但所有命令和输出仍进入审计。
 
 ## 5. 知识库
 
@@ -100,8 +108,18 @@ ZeroTier 客户端手工接入；Linux 旧逻辑脚本位于
 
 ## 8. 健康检查
 
+`/api/health` 同样需要认证，可使用 Bearer Token：
+
+```bash
+curl -H "Authorization: Bearer $APP_API_TOKEN" \
+  http://127.0.0.1:8000/api/health
+```
+
+Windows PowerShell：
+
 ```powershell
-Invoke-WebRequest http://127.0.0.1:8000/api/health -UseBasicParsing
+$headers = @{ Authorization = "Bearer $env:APP_API_TOKEN" }
+Invoke-WebRequest http://127.0.0.1:8000/api/health -Headers $headers -UseBasicParsing
 ```
 
 也可在登录会话中访问 `/api/v1/overview` 和 `/api/v1/knowledge-base/status`。

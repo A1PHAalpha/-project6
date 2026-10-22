@@ -78,6 +78,7 @@ Cookie: netops_token=<APP_API_TOKEN>
 | GET | `/api/v1/diagnoses` | 诊断记录 |
 | GET | `/api/v1/sessions` | 诊断会话列表 |
 | GET | `/api/v1/sessions/{session_id}` | 会话、证据和消息 |
+| GET | `/api/v1/sessions/{session_id}/report` | 导出该会话最近一次诊断报告 |
 | POST | `/api/v1/diagnose` | 创建诊断 |
 
 ### 设置

@@ -112,6 +112,13 @@ npm run test:e2e -- --project=desktop-chrome
 npm run test:e2e -- --project=mobile-chrome
 ```
 
+生成不依赖真实 LLM/设备的 Live 演示数据：
+
+```bash
+.venv/bin/python -m test_cases.seed_demo --db-path ./data/demo.db --reset
+SQLITE_DB_PATH=./data/demo.db .venv/bin/python start.py --live
+```
+
 ## 6. 修改数据库
 
 数据库结构变更必须新增迁移，不能直接改写已发布迁移。修改后至少验证：

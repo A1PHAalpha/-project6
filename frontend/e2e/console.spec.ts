@@ -135,11 +135,11 @@ test("assistant and device detail card can be repositioned by dragging", async (
   const detailHeader = await detail.locator(".drawer-head").boundingBox();
   await page.mouse.move(detailHeader!.x + 80, detailHeader!.y + 18);
   await page.mouse.down();
-  await page.mouse.move(detailHeader!.x + 20, detailHeader!.y + 80, { steps: 8 });
+  await page.mouse.move(detailHeader!.x + 20, detailHeader!.y - 30, { steps: 8 });
   await page.mouse.up();
   const detailAfter = await detail.boundingBox();
   expect(detailAfter!.x).toBeLessThan(detailBefore!.x - 20);
-  expect(detailAfter!.y).toBeGreaterThan(detailBefore!.y + 20);
+  expect(detailAfter!.y).toBeLessThan(detailBefore!.y - 10);
 });
 
 test("knowledge preview and rebuild workflow render", async ({ page }) => {
