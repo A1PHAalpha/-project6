@@ -18,7 +18,9 @@ import {
   Wrench,
   X
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../shared/api/client";
 import { BackupReminder, ConfirmDialog, StatusBadge } from "../../shared/components/ui";
 import { useWorkspace } from "../../shared/state/workspace";
@@ -51,6 +53,7 @@ export function AiWorkspace({
   session: DiagnosisSession | null;
   onOpenDevice: (deviceName: string, anchor?: DOMRect) => void;
 }) {
+  const navigate = useNavigate();
   const collapsed = useWorkspace((state) => state.assistantCollapsed);
   const toggleAssistant = useWorkspace((state) => state.toggleAssistant);
   const sessionPanelOpen = useWorkspace((state) => state.sessionPanelOpen);
@@ -66,7 +69,6 @@ export function AiWorkspace({
   const [quickAcknowledged, setQuickAcknowledged] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [useKnowledgeBase, setUseKnowledgeBase] = useState(true);
-  const [useWebSearch, setUseWebSearch] = useState(false);
   const [panelWidth, setPanelWidth] = useState(440);
   const [panelHeight, setPanelHeight] = useState<number | null>(660);
   const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null);
@@ -74,6 +76,11 @@ export function AiWorkspace({
   const [resizing, setResizing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const sessions = useQuery({
+    queryKey: ["diagnosis-sessions"],
+    queryFn: () => api.listSessions(20),
+    enabled: sessionPanelOpen
+  });
   const suggestion = session?.suggestion ?? null;
   const suggestionTarget = suggestion?.targetDevice ?? null;
 
@@ -191,6 +198,7 @@ export function AiWorkspace({
         useKb: useKnowledgeBase
       });
       setLocalSessionId(result.session_id);
+      navigate(`/diagnosis?session=${encodeURIComponent(result.session_id)}`, { replace: true });
       const causes = (result.answer.possible_causes ?? [])
         .map((cause) => cause.cause)
         .filter(Boolean);
@@ -231,9 +239,7 @@ export function AiWorkspace({
     setMessages([]);
     setLocalSessionId(undefined);
     setSessionPanelOpen(false);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("session");
-    window.history.replaceState({}, "", url);
+    navigate("/diagnosis", { replace: true });
   }
 
   if (collapsed) {
@@ -328,7 +334,23 @@ export function AiWorkspace({
                 <X size={15} />
               </button>
             </header>
-            {session ? (
+            {sessions.data?.length ? (
+              sessions.data.map((item) => (
+                <button
+                  className={`session-list-item ${item.id === session?.id ? "active" : ""}`}
+                  type="button"
+                  key={item.id}
+                  onClick={() => {
+                    navigate(`/diagnosis?session=${encodeURIComponent(item.id)}`, { replace: true });
+                    setSessionPanelOpen(false);
+                  }}
+                >
+                  <strong>{item.title}</strong>
+                  <span>{item.id} · {item.modelId}</span>
+                  <span>{new Date(item.updatedAt).toLocaleString("zh-CN")}</span>
+                </button>
+              ))
+            ) : session ? (
               <button className="session-list-item active" type="button">
                 <strong>{session.title}</strong>
                 <span>{session.id} · {session.modelId}</span>
@@ -372,10 +394,15 @@ export function AiWorkspace({
                     className={`tool-pill ${call.status}`}
                     type="button"
                     key={call.id}
-                    onClick={(event) => onOpenDevice(call.target.split(" → ")[0], event.currentTarget.getBoundingClientRect())}
+                    disabled={!call.deviceName}
+                    onClick={(event) => {
+                      if (call.deviceName) {
+                        onOpenDevice(call.deviceName, event.currentTarget.getBoundingClientRect());
+                      }
+                    }}
                   >
                     <span>{call.status === "success" ? "成功" : "失败"}</span>
-                    {call.name} · {call.target}
+                    {call.name} · {call.deviceName ?? call.target}
                   </button>
                 ))}
               </div>
@@ -560,15 +587,15 @@ export function AiWorkspace({
               <span>{useKnowledgeBase ? "开" : "关"}</span>
             </button>
             <button
-              className={`capability-toggle ${useWebSearch ? "active" : ""}`}
+              className="capability-toggle"
               type="button"
-              aria-pressed={useWebSearch}
-              title="网络搜索请求会随诊断参数发送；当前后端搜索适配器仍需接入"
-              onClick={() => setUseWebSearch((value) => !value)}
+              disabled
+              aria-pressed={false}
+              title="网络搜索适配器将在生产阶段接入"
             >
               <Globe2 size={14} />
               网络搜索
-              <span>{useWebSearch ? "开" : "关"}</span>
+              <span>未接入</span>
             </button>
             <span className="composer-safety">终端操作需人工确认并全程记录</span>
           </div>

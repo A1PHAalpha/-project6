@@ -170,6 +170,7 @@ export interface DiagnosisSession {
   toolCalls: Array<{
     id: string;
     name: string;
+    deviceName: string | null;
     target: string;
     status: "success" | "failed";
   }>;

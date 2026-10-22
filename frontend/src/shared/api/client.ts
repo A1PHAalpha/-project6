@@ -351,6 +351,11 @@ export const api = {
     return null;
   },
 
+  async listSessions(limit = 20): Promise<DiagnosisSession[]> {
+    if (mockMode) return delay([mockSession]);
+    return request(`/api/v1/sessions?limit=${limit}`);
+  },
+
   sessionReportUrl(sessionId: string): string {
     return `/api/v1/sessions/${encodeURIComponent(sessionId)}/report`;
   },

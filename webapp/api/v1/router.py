@@ -400,12 +400,18 @@ def _session_detail_dto(session_id: str) -> dict | None:
     tool_calls = []
     for call in detail.get("tool_calls", []):
         result = tool_results.get(call.get("tool_call_id"), {})
+        arguments = db._json_value(call.get("arguments_json")) or {}
+        device_name = arguments.get("device_name")
+        if not device_name:
+            names = arguments.get("device_names") or []
+            device_name = names[0] if names else None
         tool_calls.append(
             {
                 "id": call.get("tool_call_id"),
                 "name": call.get("tool_name") or "tool",
+                "deviceName": device_name,
                 "target": json.dumps(
-                    db._json_value(call.get("arguments_json")) or {},
+                    arguments,
                     ensure_ascii=False,
                 )[:120],
                 "status": (

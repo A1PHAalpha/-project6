@@ -47,7 +47,7 @@ test("idle assistant is empty, scrollable and keeps model capabilities in the co
   await expect(assistant).toBeVisible();
   await expect(assistant.getByText("诊断结论")).toHaveCount(0);
   await expect(assistant.getByRole("button", { name: "知识库 开" })).toBeVisible();
-  await expect(assistant.getByRole("button", { name: "网络搜索 关" })).toBeVisible();
+  await expect(assistant.getByRole("button", { name: "网络搜索 未接入" })).toBeDisabled();
   await expect(assistant.getByPlaceholder("描述故障现象，或输入复测 / 查看接口…")).toBeVisible();
   if (testInfo.project.name !== "mobile-chrome") {
     const assistantBox = await assistant.boundingBox();

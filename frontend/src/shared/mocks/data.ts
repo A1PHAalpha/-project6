@@ -318,9 +318,9 @@ export const mockSession: DiagnosisSession = {
     { id: "KB-IF-002", title: "接口 line protocol down 排查", version: "v1.0", source: "Cisco 官方文档", distance: 0.51 }
   ],
   toolCalls: [
-    { id: "tc1", name: "collect_status", target: "BR-A-R2", status: "success" },
-    { id: "tc2", name: "collect_status", target: "BR-A-SW2", status: "success" },
-    { id: "tc3", name: "ping_test", target: "BR-A-PC → HQ-SRV", status: "failed" }
+    { id: "tc1", name: "collect_status", deviceName: "BR-A-R2", target: "BR-A-R2", status: "success" },
+    { id: "tc2", name: "collect_status", deviceName: "BR-A-SW2", target: "BR-A-SW2", status: "success" },
+    { id: "tc3", name: "ping_test", deviceName: "BR-A-PC", target: "BR-A-PC → HQ-SRV", status: "failed" }
   ],
   conclusion: "BR-A-R2 Gi0/1 与 BR-A-SW2 Gi0/0 同时 down，BR-A-PC 到 HQ-SRV 丢包 100%。证据指向分支A路由器与交换机之间的互联链路。",
   causes: [
