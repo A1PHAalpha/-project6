@@ -225,10 +225,16 @@ export interface TerminalSession {
   deviceName: string;
   operator: string;
   status: "open" | "closed" | "failed";
+  backupStatus: "not_requested" | "acknowledged" | "completed" | "failed";
   backupAcknowledgedAt: string;
   startedAt: string;
   endedAt: string | null;
   events: TerminalEvent[];
+}
+
+export interface WriteConfirmation {
+  confirmation_id: string;
+  expires_at: number;
 }
 
 export interface EnvironmentSettings {

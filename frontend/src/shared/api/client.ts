@@ -23,7 +23,8 @@ import type {
   OverviewData,
   PageResult,
   TerminalSession,
-  Topology
+  Topology,
+  WriteConfirmation
 } from "../types";
 
 export const mockMode =
@@ -465,6 +466,7 @@ export const api = {
         deviceName,
         operator: "web",
         status: "open",
+        backupStatus: "acknowledged",
         backupAcknowledgedAt: backupAcknowledged ? now : "",
         startedAt: now,
         endedAt: null,
@@ -489,10 +491,45 @@ export const api = {
     });
   },
 
+  async backupTerminal(sessionId: string): Promise<TerminalSession> {
+    if (mockMode) {
+      const now = new Date().toISOString();
+      return delay({
+        id: sessionId,
+        deviceName: "mock",
+        operator: "web",
+        status: "open",
+        backupStatus: "completed",
+        backupAcknowledgedAt: now,
+        startedAt: now,
+        endedAt: null,
+        events: []
+      });
+    }
+    return request(`/api/v1/terminal/sessions/${sessionId}/backup`, { method: "POST" });
+  },
+
+  async requestWriteConfirmation(sessionId: string, command: string): Promise<WriteConfirmation> {
+    if (mockMode) {
+      return delay({
+        confirmation_id: `wc_${Date.now()}`,
+        expires_at: Date.now() / 1000 + 120
+      });
+    }
+    return request(`/api/v1/terminal/sessions/${sessionId}/write-intents`, {
+      method: "POST",
+      body: JSON.stringify({ command })
+    });
+  },
+
   async sendTerminalCommand(
     sessionId: string,
     command: string,
-    options: { source?: "manual" | "quick_action"; confirmed?: boolean } = {}
+    options: {
+      source?: "manual" | "quick_action";
+      confirmed?: boolean;
+      confirmationId?: string;
+    } = {}
   ): Promise<TerminalSession["events"]> {
     if (mockMode) {
       const now = new Date().toISOString();
@@ -520,7 +557,8 @@ export const api = {
       body: JSON.stringify({
         command,
         source: options.source ?? "manual",
-        confirmed: options.confirmed ?? true
+        confirmed: options.confirmed ?? true,
+        confirmation_id: options.confirmationId ?? null
       })
       }
     );

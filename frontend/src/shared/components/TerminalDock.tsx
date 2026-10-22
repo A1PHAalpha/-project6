@@ -25,6 +25,7 @@ export function TerminalDock() {
   const [events, setEvents] = useState<TerminalEvent[]>([]);
   const [starting, setStarting] = useState(false);
   const [sending, setSending] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [command, setCommand] = useState("");
   const [pendingWriteCommand, setPendingWriteCommand] = useState<string | null>(null);
@@ -74,15 +75,39 @@ export function TerminalDock() {
     }
   }
 
+  async function backupSession() {
+    if (!session) return;
+    setBackupBusy(true);
+    setError(null);
+    try {
+      const updated = await api.backupTerminal(session.id);
+      setSession(updated);
+      if (updated.events?.length) setEvents(updated.events);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "配置备份失败");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   async function dispatchCommand(rawCommand: string, source: "manual" | "quick_action" = "manual") {
     const trimmed = rawCommand.trim();
     if (!trimmed || !session) return;
+    const isWrite = writeCommandPattern.test(trimmed);
+    if (isWrite && session.backupStatus !== "completed") {
+      setError("写命令前必须先完成配置备份");
+      return;
+    }
     setSending(true);
     setError(null);
     try {
+      const confirmation = isWrite
+        ? await api.requestWriteConfirmation(session.id, trimmed)
+        : null;
       const received = await api.sendTerminalCommand(session.id, trimmed, {
         source,
-        confirmed: source === "quick_action"
+        confirmed: source === "quick_action",
+        confirmationId: confirmation?.confirmation_id
       });
       setEvents((current) => [...current, ...received]);
       setCommand("");
@@ -106,6 +131,10 @@ export function TerminalDock() {
     const trimmed = command.trim();
     if (!trimmed) return;
     if (writeCommandPattern.test(trimmed)) {
+      if (session?.backupStatus !== "completed") {
+        setError("写命令前必须先完成配置备份");
+        return;
+      }
       setPendingWriteCommand(trimmed);
       return;
     }
@@ -130,9 +159,17 @@ export function TerminalDock() {
           <div className="terminal-heading">
             <SquareTerminal size={15} />
             <strong>终端 · {deviceName}</strong>
-            <span className={`status-badge ${session ? "tone-success" : "tone-warning"}`}>
+            <span className={`status-badge ${
+              session?.backupStatus === "completed" ? "tone-success" : "tone-warning"
+            }`}>
               <span className="status-dot" />
-              {session ? "已记录" : "待备份确认"}
+              {!session
+                ? "待备份确认"
+                : session.backupStatus === "completed"
+                  ? "已备份"
+                  : session.backupStatus === "failed"
+                    ? "备份失败"
+                    : "未备份"}
             </span>
           </div>
           <div className="terminal-head-actions">
@@ -190,11 +227,23 @@ export function TerminalDock() {
                     </div>
                   ) : null}
                 </div>
+                {error ? <div className="inline-error">{error}</div> : null}
                 <footer className="terminal-input-row">
                   <div className="terminal-audit-note">
                     <CheckCircle2 size={13} />
-                    命令与输出正在记录
+                    {session.backupStatus === "completed"
+                      ? "已备份 · 命令与输出正在记录"
+                      : "未备份 · 写命令将被拒绝"}
                   </div>
+                  <button
+                    className="button button-quiet button-xs"
+                    type="button"
+                    disabled={backupBusy || session.backupStatus === "completed"}
+                    onClick={() => void backupSession()}
+                  >
+                    {backupBusy ? <LoaderCircle className="spin" size={13} /> : <DatabaseBackup size={13} />}
+                    {session.backupStatus === "completed" ? "备份完成" : "执行备份"}
+                  </button>
                   <input
                     className="field"
                     value={command}
