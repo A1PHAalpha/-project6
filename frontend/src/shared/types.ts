@@ -52,6 +52,7 @@ export interface CollectionRun {
 
 export interface CollectionSchedule {
   enabled: boolean;
+  scheduler_available: boolean;
   frequency_minutes: number;
   active_window: { start: string; end: string };
   scope: string;

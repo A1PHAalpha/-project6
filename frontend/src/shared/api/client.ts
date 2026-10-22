@@ -313,7 +313,8 @@ export const api = {
   async getCollectionSchedule(): Promise<CollectionSchedule> {
     if (mockMode) {
       return delay({
-        enabled: true,
+        enabled: false,
+        scheduler_available: false,
         frequency_minutes: 15,
         active_window: { start: "00:00", end: "23:59" },
         scope: "all",

@@ -726,7 +726,7 @@ def create_collection_run(payload: CollectionCreate):
 
 
 DEFAULT_SCHEDULE = {
-    "enabled": True,
+    "enabled": False,
     "frequency_minutes": 30,
     "active_window": {"start": "00:00", "end": "23:59"},
     "scope": "all",
@@ -736,14 +736,22 @@ DEFAULT_SCHEDULE = {
     "channels": {"ssh": True, "snmp": True, "connectivity": True},
 }
 
+SCHEDULER_AVAILABLE = False
+
+
+def _schedule_response(value: dict) -> dict:
+    return {**value, "scheduler_available": SCHEDULER_AVAILABLE}
+
 
 @router.get("/collection-schedule")
 def get_collection_schedule():
-    return db.get_application_setting("collection_schedule", DEFAULT_SCHEDULE)
+    return _schedule_response(
+        db.get_application_setting("collection_schedule", DEFAULT_SCHEDULE)
+    )
 
 
 class ScheduleUpdate(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     frequency_minutes: int = Field(default=30, ge=1, le=1440)
     active_window: dict = Field(default_factory=lambda: {"start": "00:00", "end": "23:59"})
     scope: str = "all"
@@ -757,7 +765,7 @@ class ScheduleUpdate(BaseModel):
 def update_collection_schedule(payload: ScheduleUpdate):
     value = payload.model_dump()
     db.set_application_setting("collection_schedule", value, actor="web")
-    return value
+    return _schedule_response(value)
 
 
 @router.get("/topology")

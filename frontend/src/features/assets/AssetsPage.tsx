@@ -28,6 +28,7 @@ import {
 import { useWorkspace } from "../../shared/state/workspace";
 import type { CollectionRun, CollectionSchedule, Device, Reachability, Tone } from "../../shared/types";
 import { AssetRow } from "./AssetTableRow";
+import { scheduleLabel } from "./scheduleLabel";
 
 function runTone(status: CollectionRun["status"]): Tone {
   if (status === "success") return "success";
@@ -66,9 +67,11 @@ export function AssetsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [collectionJobId, setCollectionJobId] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState<CollectionSchedule>({
-    enabled: true,
+    enabled: false,
+    scheduler_available: false,
     frequency_minutes: 15,
     active_window: { start: "00:00", end: "23:59" },
     scope: "all",
@@ -100,10 +103,49 @@ export function AssetsPage() {
     queryKey: ["collection-schedule"],
     queryFn: api.getCollectionSchedule
   });
+  const collectionJob = useQuery({
+    queryKey: ["collection-job", collectionJobId],
+    queryFn: () => api.getJob(collectionJobId!),
+    enabled: Boolean(collectionJobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && ["success", "partial", "failed", "cancelled"].includes(status)
+        ? false
+        : 1000;
+    }
+  });
 
   useEffect(() => {
     if (schedule.data) setScheduleForm(schedule.data);
   }, [schedule.data]);
+
+  useEffect(() => {
+    const job = collectionJob.data;
+    if (!job || !collectionJobId) return;
+    if (!["success", "partial", "failed", "cancelled"].includes(job.status)) return;
+    const label = job.status === "success"
+      ? "采集完成"
+      : job.status === "partial"
+        ? "采集部分完成"
+        : job.status === "cancelled"
+          ? "采集任务已取消"
+          : "采集失败";
+    setActionMessage(`${label}：${job.message ?? ""}`.trim());
+    setCollectionJobId(null);
+    void queryClient.invalidateQueries({ queryKey: ["collection-runs"] });
+    void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    void queryClient.invalidateQueries({ queryKey: ["devices"] });
+  }, [collectionJob.data, collectionJobId, queryClient]);
+
+  async function startCollection() {
+    try {
+      const created = await api.triggerCollection();
+      setCollectionJobId(created.jobId);
+      setActionMessage("采集任务已创建，正在执行…");
+    } catch (cause) {
+      setActionMessage(cause instanceof Error ? cause.message : "采集任务创建失败");
+    }
+  }
 
   const createDevice = useMutation({
     mutationFn: api.createDevice,
@@ -130,7 +172,11 @@ export function AssetsPage() {
     mutationFn: api.updateCollectionSchedule,
     onSuccess: async (value) => {
       setScheduleOpen(false);
-      setActionMessage(`采集计划已保存：每 ${value.frequency_minutes} 分钟检查一次。`);
+      setActionMessage(
+        value.scheduler_available
+          ? `采集计划已保存：每 ${value.frequency_minutes} 分钟检查一次。`
+          : "采集计划已保存；调度器未启用，当前需要手动采集。"
+      );
       await queryClient.invalidateQueries({ queryKey: ["collection-schedule"] });
     }
   });
@@ -156,6 +202,7 @@ export function AssetsPage() {
   const currentPageNames = deviceItems.map((device) => device.name);
   const allCurrentSelected =
     currentPageNames.length > 0 && currentPageNames.every((name) => selected.includes(name));
+  const scheduleState = scheduleLabel(scheduleForm);
 
   return (
     <div className="page-stack">
@@ -182,10 +229,7 @@ export function AssetsPage() {
             <button
               className="button button-primary"
               type="button"
-              onClick={async () => {
-                await api.triggerCollection();
-                setActionMessage("已创建立即采集任务。");
-              }}
+              onClick={() => void startCollection()}
             >
               <RefreshCw size={15} />
               立即采集
@@ -204,9 +248,9 @@ export function AssetsPage() {
       ) : null}
 
       <div className="collection-banner">
-        <span className={`status-dot ${scheduleForm.enabled ? "success" : "neutral"}`} />
-        <strong>自动采集{scheduleForm.enabled ? "已开启" : "已关闭"}</strong>
-        <span className="tag plain">每 {scheduleForm.frequency_minutes} 分钟</span>
+        <span className={`status-dot ${scheduleState.active ? "success" : "neutral"}`} />
+        <strong>{scheduleState.title}</strong>
+        <span className="tag plain">{scheduleState.detail}</span>
         <span>
           最近一次：
           {overview.data?.latestRun
@@ -221,6 +265,16 @@ export function AssetsPage() {
           采集设置
         </button>
       </div>
+
+      {collectionJob.data ? (
+        <div className="page-notice" role="status">
+          <RefreshCw className="spin" size={15} />
+          <span>
+            采集任务 {collectionJob.data.status} · {collectionJob.data.progress}%
+            {collectionJob.data.message ? ` · ${collectionJob.data.message}` : ""}
+          </span>
+        </div>
+      ) : null}
 
       <div className="asset-tabs">
         <SegmentedControl
@@ -576,9 +630,16 @@ export function AssetsPage() {
                   <input
                     type="checkbox"
                     checked={scheduleForm.enabled}
+                    disabled={!scheduleForm.scheduler_available}
                     onChange={(event) => setScheduleForm({ ...scheduleForm, enabled: event.target.checked })}
                   />
-                  <span>{scheduleForm.enabled ? "按计划自动执行" : "暂停计划"}</span>
+                  <span>
+                    {scheduleForm.scheduler_available
+                      ? scheduleForm.enabled
+                        ? "按计划自动执行"
+                        : "暂停计划"
+                      : "调度器未接入，配置仅保存"}
+                  </span>
                 </label>
               </Field>
               <Field label="采集频率（分钟）">

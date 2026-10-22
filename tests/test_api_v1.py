@@ -174,3 +174,15 @@ def test_environment_save_masks_and_preserves_other_keys(tmp_path, monkeypatch):
     assert "secret-value-123456" not in json.dumps(result, ensure_ascii=False)
     assert "•" in environment_settings.read_settings(env_path)["values"]["LLM_API_KEY"]
     assert result["needs_restart"] is True
+
+
+def test_collection_schedule_does_not_claim_scheduler(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+    data = api_v1.get_collection_schedule()
+    assert data["enabled"] is False
+    assert data["scheduler_available"] is False
+
+    updated = api_v1.update_collection_schedule(
+        api_v1.ScheduleUpdate(enabled=True, frequency_minutes=30)
+    )
+    assert updated["scheduler_available"] is False
