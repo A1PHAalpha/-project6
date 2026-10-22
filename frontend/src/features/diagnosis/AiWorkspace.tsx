@@ -349,7 +349,7 @@ export function AiWorkspace({
                 <Clock3 size={13} />
                 {new Date(session.createdAt).toLocaleString("zh-CN")}
               </span>
-              <a href={`/api/export/${session.id}`} target="_blank" rel="noreferrer">
+              <a href={api.sessionReportUrl(session.id)} target="_blank" rel="noreferrer">
                 <Download size={13} />
                 导出报告
               </a>

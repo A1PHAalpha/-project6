@@ -351,6 +351,10 @@ export const api = {
     return null;
   },
 
+  sessionReportUrl(sessionId: string): string {
+    return `/api/v1/sessions/${encodeURIComponent(sessionId)}/report`;
+  },
+
   async diagnose(
     question: string,
     sessionId?: string,

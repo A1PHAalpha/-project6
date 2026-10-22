@@ -14,13 +14,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from collector import db
 from collector.run_collect import run_collection
 from knowledge_base.build_index import build_index
 from webapp import environment_settings
+from webapp.report_export import export_diagnosis_report
 
 router = APIRouter(prefix="/api/v1", tags=["console-v1"])
 
@@ -838,6 +839,38 @@ def get_session(session_id: str):
     if not session:
         raise ApiProblem(404, "SESSION_NOT_FOUND", "诊断会话不存在")
     return session
+
+
+def _latest_diagnosis_id_for_session(session_id: str) -> int | None:
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """SELECT id FROM diagnosis_records
+               WHERE session_id=? ORDER BY id DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+    return int(row["id"]) if row else None
+
+
+@router.get("/sessions/{session_id}/report")
+def export_session_report(session_id: str):
+    diagnosis_id = _latest_diagnosis_id_for_session(session_id)
+    if diagnosis_id is None:
+        raise ApiProblem(404, "SESSION_REPORT_NOT_FOUND", "该会话还没有可导出的诊断记录")
+    path = export_diagnosis_report(diagnosis_id)
+    if not path:
+        raise ApiProblem(404, "DIAGNOSIS_NOT_FOUND", "诊断记录不存在")
+    db.record_audit_event(
+        actor="web",
+        action="report.export",
+        target_type="session",
+        target_id=session_id,
+        details={"diagnosis_id": diagnosis_id, "path": path},
+    )
+    return FileResponse(
+        path,
+        filename=os.path.basename(path),
+        media_type="text/markdown",
+    )
 
 
 class DiagnoseConsoleRequest(BaseModel):

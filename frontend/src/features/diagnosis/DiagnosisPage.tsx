@@ -47,10 +47,16 @@ export function DiagnosisPage() {
         title="诊断中心"
         description="全屏拓扑 + AI 工作区。证据、知识来源和设备事实保持可追溯；终端操作必须人工确认并全程记录。"
         actions={
-          <button className="button button-quiet" type="button" disabled={!session.data}>
+          <a
+            className="button button-quiet"
+            href={session.data ? api.sessionReportUrl(session.data.id) : undefined}
+            target="_blank"
+            rel="noreferrer"
+            aria-disabled={!session.data}
+          >
             <FileDown size={15} />
             导出报告
-          </button>
+          </a>
         }
       />
 
