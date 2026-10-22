@@ -105,13 +105,14 @@ def collect_terminal_ping(
             "started_at": started,
             "finished_at": _utc_now(),
             "raw_output": output,
+            "reachable": reachable,
             "parsed": {
                 "target_ip": target_ip,
                 "reachable": reachable,
                 "source_device": device["device_name"],
                 "execution_location": "source_device",
             },
-            "observation_status": "observed",
+            "observation_status": "observed" if reachable else "unreachable",
         }
     except Exception as exc:
         reason = f"源终端 ping 失败: {type(exc).__name__}: {exc}"
@@ -122,6 +123,7 @@ def collect_terminal_ping(
             "command": command,
             "started_at": started,
             "finished_at": _utc_now(),
+            "reachable": None,
             "parsed": {
                 "target_ip": target_ip,
                 "reachable": None,

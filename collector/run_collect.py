@@ -56,9 +56,18 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _result_ok(result: dict) -> bool:
+    if result.get("status") != "success":
+        return False
+    parsed = result.get("parsed") or {}
+    if result.get("capture_type") == "ping" and parsed.get("reachable") is False:
+        return False
+    return True
+
+
 def _status_counts(results: list[dict]) -> tuple[int, int]:
-    success = sum(1 for item in results if item.get("status") == "success")
-    failed = sum(1 for item in results if item.get("status") != "success")
+    success = sum(1 for item in results if _result_ok(item))
+    failed = sum(1 for item in results if not _result_ok(item))
     return success, failed
 
 
@@ -77,6 +86,12 @@ def _device_overall(results: list[dict]) -> tuple[str, str, str | None]:
         (result.get("fail_reason") for result in results if result.get("fail_reason")),
         None,
     )
+    if error_message is None and any(
+        result.get("capture_type") == "ping"
+        and (result.get("parsed") or {}).get("reachable") is False
+        for result in results
+    ):
+        error_message = "目标不可达"
     return overall, reachability, error_message
 
 
@@ -218,7 +233,7 @@ def run_collection(
                 )
                 results.append(ping_result)
                 connectivity_tests += 1
-                if ping_result.get("status") == "success":
+                if _result_ok(ping_result):
                     connectivity_successes += 1
                 else:
                     connectivity_failures += 1
