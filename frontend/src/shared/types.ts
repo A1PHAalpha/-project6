@@ -177,7 +177,10 @@ export interface DiagnosisSession {
   causes: Array<{ title: string; basis: string; tone: Tone }>;
   suggestion: {
     title: string;
+    actions: string[];
     command: string[];
+    targetDevice: string | null;
+    canExecute: boolean;
     note: string;
     requiresManualConfirmation: boolean;
   } | null;

@@ -75,7 +75,7 @@ export function AiWorkspace({
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const suggestion = session?.suggestion ?? null;
-  const suggestionTarget = session?.evidence[0]?.deviceName ?? "BR-A-R2";
+  const suggestionTarget = suggestion?.targetDevice ?? null;
 
   useEffect(() => {
     setMessages(session?.messages ?? []);
@@ -448,12 +448,18 @@ export function AiWorkspace({
                 <StatusBadge tone="warning">需人工确认</StatusBadge>
               </div>
               <p>{suggestion.title}</p>
-              <pre>{suggestion.command.join("\n")}</pre>
+              {suggestion.actions.map((action) => (
+                <p key={action}>{action}</p>
+              ))}
+              {suggestion.command.length ? (
+                <pre>{suggestion.command.join("\n")}</pre>
+              ) : null}
               <small>{suggestion.note}</small>
               <div className="suggestion-actions">
                 <button
                   className="button button-primary button-sm"
                   type="button"
+                  disabled={!suggestion.canExecute || !suggestionTarget}
                   onClick={() => {
                     setQuickAcknowledged(false);
                     setQuickOpen(true);
@@ -465,7 +471,10 @@ export function AiWorkspace({
                 <button
                   className="button button-quiet button-sm"
                   type="button"
-                  onClick={() => useWorkspace.getState().openTerminal(suggestionTarget)}
+                  disabled={!suggestionTarget}
+                  onClick={() => {
+                    if (suggestionTarget) useWorkspace.getState().openTerminal(suggestionTarget);
+                  }}
                 >
                   <SquareTerminal size={15} />
                   打开终端
@@ -574,12 +583,12 @@ export function AiWorkspace({
         confirmLabel="确认并下发"
         confirmDisabled={!quickAcknowledged}
         onConfirm={() => {
-          if (!suggestion) return;
+          if (!suggestion || !suggestionTarget || !suggestion.command.length) return;
           setQuickOpen(false);
           queueTerminalCommands(suggestionTarget, suggestion.command);
         }}
       >
-        <BackupReminder deviceName={suggestionTarget} />
+        <BackupReminder deviceName={suggestionTarget ?? "目标设备"} />
         <div className="quick-command-help">
           <strong>命令将检查什么</strong>
           <ul>

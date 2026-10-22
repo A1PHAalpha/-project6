@@ -329,11 +329,14 @@ export const mockSession: DiagnosisSession = {
   ],
   suggestion: {
     title: "检查 BR-A-R2 Gi0/1 / BR-A-SW2 Gi0/0 链路",
+    actions: ["检查 BR-A-R2 Gi0/1 与 BR-A-SW2 Gi0/0 链路"],
     command: [
       "show interface GigabitEthernet0/1",
       "show interface GigabitEthernet0/0",
       "show cdp neighbors"
     ],
+    targetDevice: "BR-A-R2",
+    canExecute: true,
     note: "先核对物理链路和接口状态；当前建议只包含人工确认后才可下发的检查命令。",
     requiresManualConfirmation: true
   },

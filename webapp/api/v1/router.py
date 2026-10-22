@@ -295,6 +295,53 @@ def _sessions_for_console(limit: int = 8) -> list[dict]:
     return result
 
 
+def _suggestion_dto(answer: dict, evidence: list[dict]) -> dict | None:
+    raw = answer.get("fix_suggestions") or []
+    actions: list[str] = []
+    commands: list[str] = []
+    target_device: str | None = None
+    for item in raw:
+        if isinstance(item, str):
+            actions.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip()
+        command = str(item.get("command") or "").strip()
+        if action:
+            actions.append(action)
+        if command:
+            commands.append(command)
+        if not target_device and item.get("target_device"):
+            target_device = str(item["target_device"])
+    check_steps = [
+        str(step)
+        for step in (answer.get("check_steps") or [])
+        if str(step).strip()
+    ]
+    if not actions and check_steps:
+        actions = check_steps
+    if not target_device:
+        devices = {
+            str(item.get("device_name"))
+            for item in evidence
+            if isinstance(item, dict) and item.get("device_name")
+        }
+        if len(devices) == 1:
+            target_device = next(iter(devices))
+    if not actions and not commands:
+        return None
+    return {
+        "title": actions[0] if actions else "按证据执行检查或修复步骤",
+        "actions": actions,
+        "command": commands,
+        "targetDevice": target_device,
+        "canExecute": bool(commands and target_device),
+        "note": "模型仅提供建议。执行前请确认配置备份，并由人工决定是否下发。",
+        "requiresManualConfirmation": True,
+    }
+
+
 def _session_detail_dto(session_id: str) -> dict | None:
     detail = db.get_agent_session(session_id)
     if not detail:
@@ -347,8 +394,6 @@ def _session_detail_dto(session_id: str) -> dict | None:
                     "tone": "warning" if len(causes) else "danger",
                 }
             )
-    suggestions = answer.get("fix_suggestions") or []
-    check_steps = answer.get("check_steps") or []
     tool_results = {
         item.get("tool_call_id"): item for item in detail.get("tool_results", [])
     }
@@ -423,16 +468,7 @@ def _session_detail_dto(session_id: str) -> dict | None:
             or "诊断已记录，尚未形成明确结论。"
         ),
         "causes": causes,
-        "suggestion": (
-            {
-                "title": "按证据执行检查或修复步骤",
-                "command": suggestions or check_steps,
-                "note": "模型仅提供建议。执行前请确认配置备份，并由人工决定是否下发。",
-                "requiresManualConfirmation": True,
-            }
-            if suggestions or check_steps
-            else None
-        ),
+        "suggestion": _suggestion_dto(answer, evidence),
         "missingInformation": (
             conclusion.get("missing_information")
             or answer.get("missing_information")
