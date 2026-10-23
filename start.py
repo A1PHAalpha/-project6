@@ -56,9 +56,15 @@ def _venv_python() -> Path:
     return VENV_DIR / "bin" / "python"
 
 
-def _same_executable(left: str | Path, right: str | Path) -> bool:
+def _is_project_interpreter() -> bool:
+    """Return True only when the running interpreter's venv prefix is this project.
+
+    ``.venv/bin/python`` is usually a symlink to the system interpreter, so
+    comparing the executable files themselves would incorrectly report that
+    the system interpreter is already inside the project venv.
+    """
     try:
-        return os.path.samefile(left, right)
+        return Path(sys.prefix).resolve() == VENV_DIR.resolve()
     except OSError:
         return False
 
@@ -74,7 +80,7 @@ def _ensure_project_interpreter(create_missing: bool = True) -> None:
             raise RuntimeError("未找到 .venv；请先运行 python start.py 完成首次环境准备")
         print(f"[环境] 未找到 .venv，使用 {sys.executable} 创建...", flush=True)
         subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], cwd=PROJECT_ROOT, check=True)
-    if _same_executable(sys.executable, target):
+    if _is_project_interpreter():
         return
 
     print(f"[环境] 切换到项目虚拟环境：{target}", flush=True)
@@ -94,6 +100,11 @@ def _missing_modules() -> list[str]:
 
 
 def _install_python_dependencies() -> None:
+    if not _is_project_interpreter():
+        raise RuntimeError(
+            "依赖安装被拒绝：当前不是项目 .venv 解释器。请从项目根目录重新运行 "
+            "python start.py，启动器会自动切换虚拟环境。"
+        )
     requirements = (
         PROJECT_ROOT / "requirements" / "dev.txt",
         PROJECT_ROOT / "requirements" / "collect.txt",
