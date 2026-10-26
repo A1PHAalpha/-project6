@@ -16,7 +16,43 @@ from openai import OpenAI
 
 logger = logging.getLogger("llm_client")
 
+DEFAULT_MAX_TOKENS = 3000
+DEFAULT_TEMPERATURE = 0.2
+DEFAULT_TIMEOUT_SECONDS = 60.0
+
 _client = None
+
+
+def _read_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, ""))
+    except (TypeError, ValueError):
+        return default
+    if not minimum <= value <= maximum:
+        return default
+    return value
+
+
+def _read_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, ""))
+    except (TypeError, ValueError):
+        return default
+    if not minimum <= value <= maximum:
+        return default
+    return value
+
+
+def get_temperature() -> float:
+    return _read_float("LLM_TEMPERATURE", DEFAULT_TEMPERATURE, 0.0, 2.0)
+
+
+def get_max_tokens() -> int:
+    return _read_int("LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS, 128, 8192)
+
+
+def get_timeout() -> float:
+    return _read_float("LLM_TIMEOUT", DEFAULT_TIMEOUT_SECONDS, 1.0, 600.0)
 
 
 def get_client() -> OpenAI:
@@ -26,7 +62,7 @@ def get_client() -> OpenAI:
         base_url = os.getenv("LLM_BASE_URL")
         if not api_key:
             raise RuntimeError("未配置 LLM_API_KEY，请检查 .env 文件")
-        _client = OpenAI(api_key=api_key, base_url=base_url)
+        _client = OpenAI(api_key=api_key, base_url=base_url, timeout=get_timeout())
     return _client
 
 
@@ -40,14 +76,20 @@ def get_provider_name() -> str:
     return hostname or "openai_compatible"
 
 
-def chat_completion(messages: list, temperature: float = 0.2, max_tokens: int = 1500,
-                     response_format_json: bool = True):
+def chat_completion(
+    messages: list,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    response_format_json: bool = True,
+):
     """
     调用 LLM，返回 (content_text, elapsed_ms, params_used)。
     response_format_json: 若模型支持，要求返回 JSON 格式。
     """
     client = get_client()
     model = get_model_id()
+    temperature = get_temperature() if temperature is None else float(temperature)
+    max_tokens = get_max_tokens() if max_tokens is None else int(max_tokens)
     params = {"temperature": temperature, "max_tokens": max_tokens}
 
     kwargs = dict(model=model, messages=messages, **params)
@@ -67,7 +109,9 @@ def chat_completion(messages: list, temperature: float = 0.2, max_tokens: int = 
             raise
     elapsed_ms = int((time.time() - start) * 1000)
 
-    content = resp.choices[0].message.content
+    choice = resp.choices[0]
+    content = choice.message.content or ""
+    finish_reason = getattr(choice, "finish_reason", None)
     usage = getattr(resp, "usage", None)
     usage_data = {
         "prompt_tokens": getattr(usage, "prompt_tokens", None),
@@ -80,6 +124,7 @@ def chat_completion(messages: list, temperature: float = 0.2, max_tokens: int = 
         "_provider": get_provider_name(),
         "_request_id": getattr(resp, "id", None),
         "_usage": usage_data,
+        "_finish_reason": finish_reason,
         "_status": "success",
     }
     return content, elapsed_ms, params_used

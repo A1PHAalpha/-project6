@@ -12,7 +12,11 @@ from collector import db
 from knowledge_base.retriever import retrieve
 
 from .device_extractor import extract_relevant_devices
-from .evidence_builder import build_evidence_for_devices, format_evidence_for_prompt
+from .evidence_builder import (
+    build_evidence_for_devices,
+    format_evidence_for_prompt,
+    select_compact_evidence,
+)
 from .llm_client import chat_completion, get_model_id, get_provider_name, safe_parse_json
 from .prompt_templates import (
     DIAGNOSIS_SYSTEM_PROMPT,
@@ -24,6 +28,14 @@ from .prompt_templates import (
 from .sanitize import sanitize_evidence_list, sanitize_text
 
 logger = logging.getLogger("diagnosis_engine")
+
+RETRY_EVIDENCE_ITEMS = 8
+RETRY_MAX_TOKENS = 3000
+PARSE_FAILURE_PHENOMENON = "模型输出格式解析失败"
+
+
+def _is_parse_failure(answer: dict) -> bool:
+    return answer.get("fault_phenomenon") == PARSE_FAILURE_PHENOMENON
 
 
 def diagnose(
@@ -72,7 +84,7 @@ def diagnose(
     # 4. 组装 Prompt
     messages = build_messages(question_sanitized, evidence_text, kb_text)
 
-    # 5. 调用 LLM
+    # 5. 调用 LLM；截断或 JSON 解析失败时用精简证据重试一次。
     model_id = get_model_id()
     model_status = "success"
     model_error_code = None
@@ -80,7 +92,46 @@ def diagnose(
     try:
         content, elapsed_ms, params_used = chat_completion(messages)
         answer = safe_parse_json(content)
-        error = None
+        finish_reason = params_used.get("_finish_reason")
+
+        if finish_reason == "length" or _is_parse_failure(answer):
+            logger.warning(
+                "LLM 输出不可用（finish_reason=%s, parse_failure=%s），使用精简证据重试",
+                finish_reason,
+                _is_parse_failure(answer),
+            )
+            retry_evidence = select_compact_evidence(
+                evidence_sanitized, limit=RETRY_EVIDENCE_ITEMS
+            )
+            retry_messages = build_messages(
+                question_sanitized,
+                format_evidence_for_prompt(retry_evidence),
+                kb_text,
+            )
+            retry_content, retry_elapsed_ms, retry_params = chat_completion(
+                retry_messages, max_tokens=RETRY_MAX_TOKENS
+            )
+            elapsed_ms += retry_elapsed_ms
+            answer = safe_parse_json(retry_content)
+            params_used = {
+                **retry_params,
+                "_retry": True,
+                "_first_finish_reason": finish_reason,
+                "_attempts": 2,
+            }
+            messages = retry_messages
+            finish_reason = retry_params.get("_finish_reason")
+
+        if _is_parse_failure(answer) or finish_reason == "length":
+            model_status = "error"
+            model_error_code = "LLM_OUTPUT_INVALID"
+            model_error_message = (
+                "模型输出无法解析或已被截断"
+                f"（finish_reason={finish_reason}）"
+            )
+            error = model_error_message
+        else:
+            error = None
     except Exception as e:
         logger.error("LLM调用失败: %s", e)
         elapsed_ms = 0
@@ -160,5 +211,8 @@ def diagnose(
         "answer": answer,
         "response_time_ms": elapsed_ms,
         "total_response_time_ms": total_response_time_ms,
+        "model_status": model_status,
+        "model_error_code": model_error_code,
+        "model_error_message": model_error_message,
         "error": error,
     }
