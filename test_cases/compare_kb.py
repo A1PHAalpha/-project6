@@ -38,13 +38,6 @@ def _init_main_database(db):
     db.load_inventory(str(inventory_path))
 
 
-def _prepare_scratch_db(db, scratch_path: str):
-    db.DB_PATH = scratch_path
-    db.init_db()
-    inventory_path = PROJECT_ROOT / "network" / "device_inventory.json"
-    db.load_inventory(str(inventory_path))
-
-
 def _run_one(db, scenario: dict, scratch_path: str) -> dict:
     from rag_engine.diagnosis_engine import diagnose
     from test_cases.evaluation import evidence_hash
@@ -52,8 +45,13 @@ def _run_one(db, scenario: dict, scratch_path: str) -> dict:
 
     old_path = db.DB_PATH
     try:
+        for suffix in ("", "-wal", "-shm"):
+            target = Path(f"{scratch_path}{suffix}")
+            if target.exists():
+                target.unlink()
         db.DB_PATH = scratch_path
-        db.reset_collection_data()
+        db.init_db()
+        db.load_inventory(str(PROJECT_ROOT / "network" / "device_inventory.json"))
         seed_scenario(scenario)
         result_with_kb = diagnose(
             scenario["question"],
@@ -136,7 +134,6 @@ def run_all(
     try:
         if build_kb:
             _build_kb_index()
-        _prepare_scratch_db(db, scratch_path)
         db.DB_PATH = main_db_path
 
         suite_id = db.upsert_test_suite(

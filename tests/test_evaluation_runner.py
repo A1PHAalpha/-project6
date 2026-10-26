@@ -25,12 +25,17 @@ def test_evaluation_runner_persists_two_variants_without_touching_evidence(
             "recheck_method": "ping 10.10.10.100",
             "missing_information": "无",
         }
-        return {
-            "diagnosis_id": 1 if use_kb else 2,
-            "session_id": "session-test",
-            "conclusion_id": "conclusion-test",
-            "answer": answer,
-            "evidence": [
+        from rag_engine.evidence_builder import build_evidence_for_devices
+
+        evidence = [
+            item
+            for item in build_evidence_for_devices(
+                [device["device_name"] for device in db.list_devices()]
+            )
+            if item.get("observation_id")
+        ][:3]
+        if not evidence:
+            evidence = [
                 {
                     "device_name": "HQ-R1",
                     "run_id": "scratch-run",
@@ -38,7 +43,29 @@ def test_evaluation_runner_persists_two_variants_without_touching_evidence(
                     "status": "success",
                     "summary": "证据",
                 }
-            ],
+            ]
+        saved = db.save_diagnosis_run(
+            question=question,
+            model_id="test-model",
+            prompt_template_id="diagnosis_v2",
+            prompt_version=None,
+            llm_params={},
+            answer=answer,
+            evidence=evidence,
+            retrieved_docs=[],
+            use_kb=use_kb,
+            kb_status="disabled",
+            kb_error=None,
+            response_time_ms=1,
+            total_response_time_ms=2,
+            context_messages=[],
+        )
+        return {
+            "diagnosis_id": saved["diagnosis_id"],
+            "session_id": saved["session_id"],
+            "conclusion_id": saved["conclusion_id"],
+            "answer": answer,
+            "evidence": evidence,
             "retrieved_docs": [],
             "response_time_ms": 1,
             "total_response_time_ms": 2,
