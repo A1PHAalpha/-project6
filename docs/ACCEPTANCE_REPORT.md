@@ -4,7 +4,7 @@
 - 代码基线：本地 `main`（评测开始前提交）
 - 实验环境：EVE-NG + ZeroTier；3 台 Cisco IOSv 路由器、3 台 IOSvL2 交换机、
   3 个 VPCS 终端；真实 LLM：`qwen-plus`（阿里云 MaaS 兼容接口）
-- 评测数据：临时 SQLite/Chroma 数据，不污染 `data/ops.db`
+- 评测数据：10 场景对比使用临时 SQLite/Chroma；P5 真实演练使用 `data/ops.db` 并保留记录
 
 ## 总结论
 
@@ -17,7 +17,7 @@
 | 5. 故障诊断 | 通过 | 字段完整、证据引用有效；10 场景评测见第 5 节 |
 | 6. 操作控制 | 通过 | 白名单、终端备份门槛、一次性令牌、脱敏、审计测试全部通过 |
 | 7. 效果测试 | 通过 | 10 场景×2 完成；准确率/可执行性/耗时见第 7 节 |
-| 8. 结果展示 | 部分通过 | Web/API/Markdown/HTML 通过；“真实故障注入→人工修复→复测”演练尚未执行 |
+| 8. 结果展示 | 通过 | Web/API/Markdown/HTML 通过；已完成真实“故障注入→采集→AI诊断→备份→人工修复→复测”演练 |
 
 ## 1. 实验网络
 
@@ -169,12 +169,41 @@ insufficient_evidence: INSUFFICIENT_EVIDENCE_01
 | P1 设备状态 | `/console/assets` 200；API 返回 9 台设备 | 通过 |
 | P2 诊断页面 | `/console/diagnosis` 200；拓扑/证据/知识/建议组件存在 | 通过 |
 | P3 报告导出 | Markdown 200；HTML 200；`format=pdf` 400 | 通过 |
-| P4 人工记录 | 变更/终端/复测测试通过 | 通过 |
-| P5 端到端演示 | 尚未执行真实故障注入→人工修复→复测 | 未完成 |
+| P4 人工记录 | 终端会话、配置备份、手动处理记录均可查询 | 通过 |
+| P5 端到端演示 | 真实链路故障→采集→AI诊断→备份→人工修复→复测完成 | 通过 |
 | P6 前端质量 | 16 个 Vitest 通过；Vite build 成功 | 通过 |
 
-P5 需要一次受控演练：在 EVE 上设置链路/VLAN/路由/ACL 故障，执行真实采集、AI 诊断、
-人工修复和复测，并保留审计记录。该操作会修改实验设备配置，需在维护窗口执行。
+### P5 演练记录
+
+故障点：
+
+```text
+BR-A-R2 Ethernet0/0（到 BR-A-SW2 的业务 trunk）
+管理网 Ethernet3/0 不受影响
+```
+
+执行链：
+
+```text
+baseline run: run_ab44ba937b4e4bb7890d25756490264a
+fault run:    run_5343d48d430144038c14ed7250f79bf1
+recheck run:  run_ac14c92e5f224feb8eab586ca958098c
+diagnosis_id: 1
+model_status: success
+终端会话:     term_dcf3c0a24b3247a0987b95585450e205
+备份:         reports/backups/BR-A-R2_20261027_004218.cfg
+备份状态:     completed
+复测:         HQ-R1 -> 10.20.10.11，success_rate=100%，connectivity=1/1
+恢复状态:     Ethernet0/0 及 .10/.20/.99 子接口均为 up/up
+报告:         reports/diagnosis_1.md、reports/diagnosis_1.html
+```
+
+故障期间 `BR-A-PC` 采集连通性为 0/1，诊断识别到 BR-A-R2 子接口
+administratively down；修复后复测恢复为 1/1。AI 建议中的命令为多接口组合，人工实际
+执行的是 `interface Ethernet0/0` + `no shutdown`，并在备份后通过审计终端完成。
+
+未创建正式 `change_request` 单据；人工修复通过受审计终端会话 + 配置备份 + 手动处理记录
+留痕。若验收要求所有变更必须走变更单，可再补一次变更单流程演练。
 
 ## 复现命令
 
