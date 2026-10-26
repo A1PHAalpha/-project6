@@ -130,26 +130,148 @@ def chat_completion(
     return content, elapsed_ms, params_used
 
 
+def _as_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return "；".join(_as_text(item) for item in value if item is not None)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _as_refs(value) -> list[str]:
+    return [str(item) for item in _as_list(value) if item]
+
+
+_DIAGNOSIS_KEYS = {
+    "fault_phenomenon",
+    "evidence_used",
+    "possible_causes",
+    "check_steps",
+    "fix_suggestions",
+    "recheck_method",
+    "missing_information",
+}
+
+
+def _normalize_answer(answer) -> dict | None:
+    """Keep model JSON fields in the types expected by the database/UI."""
+    if not isinstance(answer, dict):
+        return None
+    if not any(key in answer for key in _DIAGNOSIS_KEYS):
+        return answer
+
+    normalized = dict(answer)
+    for key in ("fault_phenomenon", "recheck_method", "missing_information"):
+        normalized[key] = _as_text(normalized.get(key))
+
+    normalized["check_steps"] = [
+        _as_text(step)
+        for step in _as_list(normalized.get("check_steps"))
+        if _as_text(step)
+    ]
+
+    evidence = []
+    for item in _as_list(normalized.get("evidence_used")):
+        if isinstance(item, dict):
+            entry = dict(item)
+            entry["finding"] = _as_text(entry.get("finding"))
+            evidence.append(entry)
+        elif item:
+            evidence.append(
+                {
+                    "observation_id": None,
+                    "device_name": None,
+                    "collected_at": None,
+                    "finding": _as_text(item),
+                }
+            )
+    normalized["evidence_used"] = evidence
+
+    causes = []
+    for item in _as_list(normalized.get("possible_causes")):
+        if isinstance(item, dict):
+            cause = dict(item)
+            cause["cause"] = _as_text(cause.get("cause"))
+            cause["kb_refs"] = _as_refs(cause.get("kb_refs"))
+            cause["confidence"] = _as_text(cause.get("confidence")) or "medium"
+            causes.append(cause)
+        elif item:
+            causes.append(
+                {
+                    "cause": _as_text(item),
+                    "kb_refs": [],
+                    "confidence": "medium",
+                }
+            )
+    normalized["possible_causes"] = causes
+
+    suggestions = []
+    for item in _as_list(normalized.get("fix_suggestions")):
+        if isinstance(item, dict):
+            suggestion = dict(item)
+            suggestion["action"] = _as_text(suggestion.get("action"))
+            suggestion["command"] = (
+                _as_text(suggestion.get("command"))
+                if suggestion.get("command") not in (None, "")
+                else None
+            )
+            suggestion["target_device"] = (
+                _as_text(suggestion.get("target_device")) or None
+            )
+            suggestion["kb_refs"] = _as_refs(suggestion.get("kb_refs"))
+            suggestion["requires_manual_confirmation"] = bool(
+                suggestion.get("requires_manual_confirmation", True)
+            )
+            suggestions.append(suggestion)
+        elif item:
+            suggestions.append(
+                {
+                    "action": _as_text(item),
+                    "command": None,
+                    "target_device": None,
+                    "kb_refs": [],
+                    "requires_manual_confirmation": True,
+                }
+            )
+    normalized["fix_suggestions"] = suggestions
+    return normalized
+
+
 def safe_parse_json(text: str) -> dict:
     """尝试解析模型输出为 JSON；若失败则包装为错误结构，不让异常直接中断诊断流程。"""
-    try:
-        return json.loads(text)
-    except Exception:
-        # 尝试提取第一个 { 到最后一个 } 之间的内容
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except Exception:
-                pass
-        logger.error("模型输出无法解析为JSON: %s", text[:300])
-        return {
-            "fault_phenomenon": "模型输出格式解析失败",
-            "evidence_used": [],
-            "possible_causes": [],
-            "check_steps": [],
-            "fix_suggestions": [],
-            "recheck_method": "",
-            "missing_information": f"模型原始输出无法解析为预期JSON结构，原始内容已记录。原文片段: {text[:300]}",
-        }
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(text[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            normalized = _normalize_answer(json.loads(candidate))
+            if normalized is not None:
+                return normalized
+        except Exception:
+            continue
+
+    logger.error("模型输出无法解析为JSON: %s", text[:300])
+    return {
+        "fault_phenomenon": "模型输出格式解析失败",
+        "evidence_used": [],
+        "possible_causes": [],
+        "check_steps": [],
+        "fix_suggestions": [],
+        "recheck_method": "",
+        "missing_information": f"模型原始输出无法解析为预期JSON结构，原始内容已记录。原文片段: {text[:300]}",
+    }
