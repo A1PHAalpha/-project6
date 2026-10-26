@@ -40,3 +40,12 @@ def test_prompt_template_is_v2_and_requests_command_target():
 
     assert '"command"' in DIAGNOSIS_SYSTEM_PROMPT
     assert '"target_device"' in DIAGNOSIS_SYSTEM_PROMPT
+
+
+def test_prompt_bounds_evidence_and_command_output():
+    from rag_engine.prompt_templates import DIAGNOSIS_SYSTEM_PROMPT
+
+    assert "最多 5 条" in DIAGNOSIS_SYSTEM_PROMPT
+    assert "不要逐条复述全部证据" in DIAGNOSIS_SYSTEM_PROMPT
+    assert "单条命令" in DIAGNOSIS_SYSTEM_PROMPT
+    assert "不要输出多行" in DIAGNOSIS_SYSTEM_PROMPT
