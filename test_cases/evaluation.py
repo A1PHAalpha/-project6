@@ -67,7 +67,15 @@ EXPECTED_BY_ID: dict[str, dict[str, Any]] = {
         "expect_no_change": True,
     },
     "INSUFFICIENT_EVIDENCE_01": {
-        "must_mention": ["缺少", "证据", "BR-B-SW3"],
+        "must_mention": ["BR-B-SW3"],
+        "must_mention_any": [
+            "缺少",
+            "无任何采集数据",
+            "无采集数据",
+            "无法判断",
+            "无法确认",
+            "证据不足",
+        ],
         "expected_devices": ["BR-B-SW3"],
         "forbidden": ["端口已经关闭", "Gi0/1 已关闭", "shutdown 已执行"],
         "require_recheck": True,

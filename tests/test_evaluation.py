@@ -70,6 +70,22 @@ def test_normal_accepts_synonyms_for_no_fault():
     assert result["correctness"] == "correct"
 
 
+def test_insufficient_evidence_accepts_synonyms_for_missing_data():
+    scenario = get_scenario("INSUFFICIENT_EVIDENCE_01")
+    expected = expected_for_scenario(scenario)
+    result = score_answer(
+        {
+            "fault_phenomenon": "无法判断 BR-B-SW3 是否存在端口被关闭",
+            "possible_causes": [],
+            "fix_suggestions": [],
+            "recheck_method": "获取数据后复测",
+            "missing_information": "BR-B-SW3 无任何设备采集数据",
+        },
+        expected,
+    )
+    assert result["correctness"] == "correct"
+
+
 def test_aggregate_and_evidence_hash():
     results = [
         {
