@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 from netmiko import ConnectHandler
-from netmiko.exceptions import NetmikoTimeoutException
+from netmiko.exceptions import (
+    NetmikoAuthenticationException,
+    NetmikoTimeoutException,
+)
 
 from rag_engine.sanitize import sanitize_text
 
@@ -61,6 +65,48 @@ def _connect_params(host: str, username: str, password: str, device_type: str, t
     return params
 
 
+def _connect_attempts() -> int:
+    try:
+        retries = int(os.getenv("SSH_CONNECT_RETRIES", "1"))
+    except (TypeError, ValueError):
+        retries = 1
+    return max(0, min(retries, 5)) + 1
+
+
+def _retry_delay_seconds() -> float:
+    try:
+        delay = float(os.getenv("SSH_RETRY_DELAY_SECONDS", "1.0"))
+    except (TypeError, ValueError):
+        delay = 1.0
+    return max(0.0, min(delay, 10.0))
+
+
+def _connect_with_retry(params: dict, *, device_name: str = "device"):
+    attempts = _connect_attempts()
+    delay = _retry_delay_seconds()
+    last_exception = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return ConnectHandler(**params)
+        except NetmikoAuthenticationException:
+            # Bad credentials are not transient; do not risk account lockout.
+            raise
+        except Exception as exc:
+            last_exception = exc
+            if attempt >= attempts:
+                raise
+            logger.warning(
+                "[%s] SSH 连接失败（第 %d/%d 次），%.1f 秒后重试: %s",
+                device_name,
+                attempt,
+                attempts,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise last_exception
+
+
 def execute_ssh_command(
     host: str,
     username: str,
@@ -71,7 +117,10 @@ def execute_ssh_command(
 ) -> str:
     """执行单条 SSH 命令，供独立只读检查复用。"""
     try:
-        conn = ConnectHandler(**_connect_params(host, username, password, device_type, timeout))
+        conn = _connect_with_retry(
+            _connect_params(host, username, password, device_type, timeout),
+            device_name=host,
+        )
     except NetmikoTimeoutException as exc:
         raise TimeoutError(f"Command timeout after {timeout}s") from exc
     try:
@@ -110,8 +159,9 @@ def collect_device(device: dict, username: str, password: str, timeout: int = 15
     host = device["mgmt_ip"]
     started = _utc_now()
     try:
-        conn = ConnectHandler(
-            **_connect_params(host, username, password, device_type, timeout)
+        conn = _connect_with_retry(
+            _connect_params(host, username, password, device_type, timeout),
+            device_name=device_name,
         )
     except Exception as exc:
         reason = sanitize_text(f"{type(exc).__name__}: {exc}")
