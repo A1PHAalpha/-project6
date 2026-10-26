@@ -375,6 +375,10 @@ export function AiWorkspace({
                 <Download size={13} />
                 导出报告
               </a>
+              <a href={api.sessionReportUrl(session.id, "html")} target="_blank" rel="noreferrer">
+                <Download size={13} />
+                HTML
+              </a>
             </div>
           ) : null}
 

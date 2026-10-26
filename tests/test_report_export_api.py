@@ -75,3 +75,44 @@ def test_export_session_report_existing_session_without_diagnosis_returns_404(
     with pytest.raises(ApiProblem) as exc:
         export_session_report(session_id)
     assert exc.value.status == 404
+
+
+def test_html_report_escapes_and_contains_content(tmp_path, monkeypatch):
+    saved = _seed_diagnosis(tmp_path, monkeypatch)
+    monkeypatch.setattr(report_export, "REPORT_DIR", str(tmp_path / "reports"))
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE diagnosis_records SET question=? WHERE id=?",
+            ("<script>alert(1)</script> 链路不通", saved["diagnosis_id"]),
+        )
+
+    path = report_export.export_diagnosis_report_html(saved["diagnosis_id"])
+
+    assert path.endswith(".html")
+    text = Path(path).read_text(encoding="utf-8")
+    assert "<html" in text
+    assert "故障诊断报告" in text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
+    assert "<script>alert(1)</script>" not in text
+
+
+def test_html_report_missing_diagnosis_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(report_export, "REPORT_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "ops.db"))
+    db.init_db()
+    assert report_export.export_diagnosis_report_html(999999) is None
+
+
+def test_export_session_report_html_format(tmp_path, monkeypatch):
+    saved = _seed_diagnosis(tmp_path, monkeypatch)
+    response = export_session_report(saved["session_id"], format="html")
+    assert Path(response.path).suffix == ".html"
+    assert response.media_type == "text/html"
+
+
+def test_export_session_report_rejects_unknown_format(tmp_path, monkeypatch):
+    saved = _seed_diagnosis(tmp_path, monkeypatch)
+    with pytest.raises(ApiProblem) as exc:
+        export_session_report(saved["session_id"], format="pdf")
+    assert exc.value.status == 400
+    assert exc.value.code == "INVALID_REPORT_FORMAT"

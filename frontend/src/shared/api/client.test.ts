@@ -8,4 +8,10 @@ describe("session report URL", () => {
       "/api/v1/sessions/session%2Fwith%20space/report"
     );
   });
+
+  it("adds the html format for the printable report", () => {
+    expect(api.sessionReportUrl("session/id", "html")).toBe(
+      "/api/v1/sessions/session%2Fid/report?format=html"
+    );
+  });
 });

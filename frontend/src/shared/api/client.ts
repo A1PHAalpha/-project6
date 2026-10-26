@@ -358,8 +358,9 @@ export const api = {
     return request(`/api/v1/sessions?limit=${limit}`);
   },
 
-  sessionReportUrl(sessionId: string): string {
-    return `/api/v1/sessions/${encodeURIComponent(sessionId)}/report`;
+  sessionReportUrl(sessionId: string, format: "md" | "html" = "md"): string {
+    const base = `/api/v1/sessions/${encodeURIComponent(sessionId)}/report`;
+    return format === "html" ? `${base}?format=html` : base;
   },
 
   async diagnose(

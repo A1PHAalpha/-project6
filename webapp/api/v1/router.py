@@ -21,7 +21,10 @@ from collector import db
 from collector.run_collect import run_collection
 from knowledge_base.build_index import build_index
 from webapp import environment_settings
-from webapp.report_export import export_diagnosis_report
+from webapp.report_export import (
+    export_diagnosis_report,
+    export_diagnosis_report_html,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["console-v1"])
 
@@ -916,11 +919,21 @@ def _latest_diagnosis_id_for_session(session_id: str) -> int | None:
 
 
 @router.get("/sessions/{session_id}/report")
-def export_session_report(session_id: str):
+def export_session_report(session_id: str, format: str = "md"):
+    if format not in ("md", "html"):
+        raise ApiProblem(
+            400,
+            "INVALID_REPORT_FORMAT",
+            "format 只能是 md 或 html",
+        )
     diagnosis_id = _latest_diagnosis_id_for_session(session_id)
     if diagnosis_id is None:
         raise ApiProblem(404, "SESSION_REPORT_NOT_FOUND", "该会话还没有可导出的诊断记录")
-    path = export_diagnosis_report(diagnosis_id)
+    path = (
+        export_diagnosis_report_html(diagnosis_id)
+        if format == "html"
+        else export_diagnosis_report(diagnosis_id)
+    )
     if not path:
         raise ApiProblem(404, "DIAGNOSIS_NOT_FOUND", "诊断记录不存在")
     db.record_audit_event(
@@ -928,12 +941,12 @@ def export_session_report(session_id: str):
         action="report.export",
         target_type="session",
         target_id=session_id,
-        details={"diagnosis_id": diagnosis_id, "path": path},
+        details={"diagnosis_id": diagnosis_id, "path": path, "format": format},
     )
     return FileResponse(
         path,
         filename=os.path.basename(path),
-        media_type="text/markdown",
+        media_type="text/html" if format == "html" else "text/markdown",
     )
 
 

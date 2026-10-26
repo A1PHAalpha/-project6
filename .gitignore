@@ -32,6 +32,7 @@ frontend/vite.config.d.ts
 # 运行产物
 data/
 reports/*.md
+reports/*.html
 reports/*.pdf
 reports/backups/
 test_cases/compare_results.json

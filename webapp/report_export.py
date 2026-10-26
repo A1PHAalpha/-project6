@@ -1,9 +1,11 @@
 """
 报告导出模块：将单次诊断记录（含证据、检索依据、诊断建议、人工处理记录）
-导出为 Markdown 报告文件，满足方案"支持导出报告"的要求。
+导出为 Markdown 或可打印的 HTML 报告文件。
 """
+import html
 import json
 import os
+import re
 from pathlib import Path
 
 from collector import db
@@ -12,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = str(PROJECT_ROOT / "reports")
 
 
-def export_diagnosis_report(diagnosis_id: int):
+def _build_report_markdown(diagnosis_id: int) -> str | None:
     detail = db.get_diagnosis_detail(diagnosis_id)
     if not detail:
         return None
@@ -173,9 +175,116 @@ def export_diagnosis_report(diagnosis_id: int):
         lines.append("")
         lines.append(f"- Prompt 版本: {session_record['prompt_version_id']}")
 
-    os.makedirs(REPORT_DIR, exist_ok=True)
-    path = os.path.join(REPORT_DIR, f"diagnosis_{diagnosis_id}.md")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    return "\n".join(lines)
 
+
+def _write_report(content: str, diagnosis_id: int, extension: str) -> str:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    path = os.path.join(REPORT_DIR, f"diagnosis_{diagnosis_id}.{extension}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
     return path
+
+
+def export_diagnosis_report(diagnosis_id: int):
+    content = _build_report_markdown(diagnosis_id)
+    if content is None:
+        return None
+    return _write_report(content, diagnosis_id, "md")
+
+
+def _markdown_to_html(markdown: str, title: str) -> str:
+    body: list[str] = []
+    in_ul = False
+    in_ol = False
+
+    def close_lists() -> None:
+        nonlocal in_ul, in_ol
+        if in_ul:
+            body.append("</ul>")
+            in_ul = False
+        if in_ol:
+            body.append("</ol>")
+            in_ol = False
+
+    for raw_line in markdown.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("### "):
+            close_lists()
+            body.append(f"<h3>{html.escape(line[4:])}</h3>")
+        elif line.startswith("## "):
+            close_lists()
+            body.append(f"<h2>{html.escape(line[3:])}</h2>")
+        elif line.startswith("# "):
+            close_lists()
+            body.append(f"<h1>{html.escape(line[2:])}</h1>")
+        elif line.startswith("- "):
+            if in_ol:
+                body.append("</ol>")
+                in_ol = False
+            if not in_ul:
+                body.append("<ul>")
+                in_ul = True
+            body.append(f"<li>{html.escape(line[2:])}</li>")
+        elif re.match(r"^\d+\.\s+", line):
+            if in_ul:
+                body.append("</ul>")
+                in_ul = False
+            if not in_ol:
+                body.append("<ol>")
+                in_ol = True
+            item = re.sub(r"^\d+\.\s+", "", line)
+            body.append(f"<li>{html.escape(item)}</li>")
+        elif not line.strip():
+            close_lists()
+        else:
+            close_lists()
+            body.append(f"<p>{html.escape(line)}</p>")
+    close_lists()
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>
+  :root {{ color-scheme: light; }}
+  body {{
+    margin: 0 auto;
+    max-width: 960px;
+    padding: 32px 24px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC",
+      "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+    color: #1f2937;
+    background: #ffffff;
+  }}
+  h1 {{ font-size: 1.8rem; border-bottom: 2px solid #0f766e; padding-bottom: 8px; }}
+  h2 {{ font-size: 1.25rem; margin-top: 28px; color: #0f766e; }}
+  h3 {{ font-size: 1.05rem; margin-top: 20px; }}
+  p, li {{ font-size: 0.95rem; }}
+  li {{ margin: 4px 0; }}
+  @media print {{
+    body {{ max-width: none; padding: 0; }}
+    h2 {{ break-after: avoid; }}
+    li, p {{ break-inside: avoid; }}
+    a {{ color: inherit; text-decoration: none; }}
+  }}
+</style>
+</head>
+<body>
+{chr(10).join(body)}
+</body>
+</html>
+"""
+
+
+def export_diagnosis_report_html(diagnosis_id: int):
+    content = _build_report_markdown(diagnosis_id)
+    if content is None:
+        return None
+    title = f"故障诊断报告 #{diagnosis_id}"
+    return _write_report(
+        _markdown_to_html(content, title), diagnosis_id, "html"
+    )
