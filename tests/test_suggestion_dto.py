@@ -49,3 +49,5 @@ def test_prompt_bounds_evidence_and_command_output():
     assert "不要逐条复述全部证据" in DIAGNOSIS_SYSTEM_PROMPT
     assert "单条命令" in DIAGNOSIS_SYSTEM_PROMPT
     assert "不要输出多行" in DIAGNOSIS_SYSTEM_PROMPT
+    assert "未发现故障" in DIAGNOSIS_SYSTEM_PROMPT
+    assert "可选指标" in DIAGNOSIS_SYSTEM_PROMPT
