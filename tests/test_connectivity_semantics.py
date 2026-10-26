@@ -1,4 +1,55 @@
 from collector import db, run_collect
+from collector.connectivity_test import collect_router_ping
+
+
+def test_router_ping_parses_success_rate(monkeypatch):
+    monkeypatch.setattr(
+        "collector.collector_ssh.execute_ssh_command",
+        lambda *_args, **_kwargs: (
+            "Type escape sequence to abort.\n"
+            "Sending 5, 100-byte ICMP Echos to 10.10.10.100, timeout is 2 seconds:\n"
+            "!!!!!\n"
+            "Success rate is 100 percent (5/5), round-trip min/avg/max = 1/1/1 ms"
+        ),
+    )
+    result = collect_router_ping(
+        {
+            "device_name": "HQ-R1",
+            "device_type": "cisco_ios",
+            "mgmt_ip": "192.168.249.11",
+        },
+        "10.10.10.100",
+        "admin",
+        "password",
+    )
+    assert result["status"] == "success"
+    assert result["reachable"] is True
+    assert result["parsed"]["success_rate"] == 100
+    assert result["parsed"]["source_device"] == "HQ-R1"
+
+
+def test_router_ping_marks_zero_percent_unreachable(monkeypatch):
+    monkeypatch.setattr(
+        "collector.collector_ssh.execute_ssh_command",
+        lambda *_args, **_kwargs: (
+            "Sending 5, 100-byte ICMP Echos to 10.10.10.100:\n"
+            ".....\n"
+            "Success rate is 0 percent (0/5)"
+        ),
+    )
+    result = collect_router_ping(
+        {
+            "device_name": "HQ-R1",
+            "device_type": "cisco_ios",
+            "mgmt_ip": "192.168.249.11",
+        },
+        "10.10.10.100",
+        "admin",
+        "password",
+    )
+    assert result["status"] == "success"
+    assert result["reachable"] is False
+    assert result["parsed"]["success_rate"] == 0
 
 
 def test_ping_command_success_but_unreachable_is_not_business_success(tmp_path, monkeypatch):

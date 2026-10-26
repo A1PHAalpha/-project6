@@ -57,6 +57,73 @@ def ping(target_ip: str, count: int = 4, timeout: int = 2) -> dict:
         }
 
 
+def collect_router_ping(
+    source_device: dict,
+    target_ip: str,
+    username: str,
+    password: str,
+    timeout: int = 20,
+) -> dict:
+    """从可 SSH 的路由器执行 ping，适用于没有 SSH 的 VPCS 终端。"""
+    from .collector_ssh import execute_ssh_command
+
+    started = _utc_now()
+    command = f"ping {target_ip} repeat 4"
+    try:
+        output = execute_ssh_command(
+            source_device["mgmt_ip"],
+            username,
+            password,
+            command,
+            timeout=timeout,
+            device_type=source_device.get("device_type") or "cisco_ios",
+        )
+        match = re.search(r"Success rate is (\d+) percent", output, re.IGNORECASE)
+        success_rate = int(match.group(1)) if match else None
+        reachable = bool(
+            (success_rate is not None and success_rate > 0)
+            or re.search(r"!{2,}", output)
+        )
+        return {
+            "status": "success",
+            "source": "ping",
+            "capture_type": "ping",
+            "command": command,
+            "started_at": started,
+            "finished_at": _utc_now(),
+            "raw_output": output,
+            "reachable": reachable,
+            "parsed": {
+                "target_ip": target_ip,
+                "reachable": reachable,
+                "success_rate": success_rate,
+                "source_device": source_device["device_name"],
+                "execution_location": "source_router",
+            },
+            "observation_status": "observed" if reachable else "unreachable",
+        }
+    except Exception as exc:
+        reason = f"源路由器 ping 失败: {type(exc).__name__}: {exc}"
+        return {
+            "status": "failed",
+            "source": "ping",
+            "capture_type": "ping",
+            "command": command,
+            "started_at": started,
+            "finished_at": _utc_now(),
+            "reachable": None,
+            "parsed": {
+                "target_ip": target_ip,
+                "reachable": None,
+                "source_device": source_device["device_name"],
+                "execution_location": "source_router",
+            },
+            "error_code": "source_ping_failed",
+            "fail_reason": reason,
+            "observation_status": "unknown",
+        }
+
+
 def collect_terminal_ping(
     device: dict,
     target_ip: str,

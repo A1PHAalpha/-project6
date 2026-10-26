@@ -23,7 +23,7 @@ export const mockDevices: Device[] = [
     vendor: "N/A",
     model: "VPCS/Linux",
     platform: "VPCS / Linux",
-    managementIp: "192.168.20.100",
+    managementIp: "10.20.10.11",
     reachability: "unreachable",
     overallStatus: "failed",
     collectedAt: observedAt,
@@ -83,7 +83,7 @@ export const mockDevices: Device[] = [
     vendor: "N/A",
     model: "VPCS/Linux",
     platform: "VPCS / Linux",
-    managementIp: "192.168.30.100",
+    managementIp: "10.30.10.11",
     reachability: "unreachable",
     overallStatus: "failed",
     collectedAt: observedAt,
@@ -162,7 +162,7 @@ export const mockDevices: Device[] = [
     vendor: "N/A",
     model: "VPCS/Linux",
     platform: "VPCS / Linux",
-    managementIp: "192.168.10.100",
+    managementIp: "10.10.10.100",
     reachability: "unknown",
     overallStatus: "skipped",
     collectedAt: null,
@@ -237,13 +237,13 @@ export const mockRuns: CollectionRun[] = [
 const nodes: TopologyNode[] = [
   { id: "HQ-R1", deviceName: "HQ-R1", role: "总部核心路由器", site: "总部", managementIp: "192.168.249.11", reachability: "reachable", summary: "OSPF 收敛正常", x: 195, y: 105 },
   { id: "HQ-SW1", deviceName: "HQ-SW1", role: "总部核心交换机", site: "总部", managementIp: "192.168.249.14", reachability: "reachable", summary: "VLAN 10 / 20", x: 195, y: 275 },
-  { id: "HQ-SRV", deviceName: "HQ-SRV", role: "总部服务器终端", site: "总部", managementIp: "192.168.10.100", reachability: "unknown", summary: "未采集", x: 410, y: 200 },
+  { id: "HQ-SRV", deviceName: "HQ-SRV", role: "总部服务器终端", site: "总部", managementIp: "10.10.10.100", reachability: "unknown", summary: "未采集", x: 410, y: 200 },
   { id: "BR-A-R2", deviceName: "BR-A-R2", role: "分支A路由器", site: "分支A", managementIp: "192.168.249.12", reachability: "reachable", summary: "Gi0/1 DOWN", x: 730, y: 105 },
   { id: "BR-A-SW2", deviceName: "BR-A-SW2", role: "分支A交换机", site: "分支A", managementIp: "192.168.249.15", reachability: "reachable", summary: "Gi0/0 DOWN", x: 730, y: 275 },
-  { id: "BR-A-PC", deviceName: "BR-A-PC", role: "分支A测试终端", site: "分支A", managementIp: "192.168.20.100", reachability: "unreachable", summary: "ping 超时", x: 945, y: 200 },
+  { id: "BR-A-PC", deviceName: "BR-A-PC", role: "分支A测试终端", site: "分支A", managementIp: "10.20.10.11", reachability: "unreachable", summary: "ping 超时", x: 945, y: 200 },
   { id: "BR-B-R3", deviceName: "BR-B-R3", role: "分支B路由器", site: "分支B", managementIp: "192.168.249.13", reachability: "reachable", summary: "路由 18", x: 1255, y: 105 },
   { id: "BR-B-SW3", deviceName: "BR-B-SW3", role: "分支B交换机", site: "分支B", managementIp: "192.168.249.16", reachability: "reachable", summary: "VLAN 10 UP", x: 1255, y: 275 },
-  { id: "BR-B-PC", deviceName: "BR-B-PC", role: "分支B测试终端", site: "分支B", managementIp: "192.168.30.100", reachability: "unreachable", summary: "ping 超时", x: 1470, y: 200 }
+  { id: "BR-B-PC", deviceName: "BR-B-PC", role: "分支B测试终端", site: "分支B", managementIp: "10.30.10.11", reachability: "unreachable", summary: "ping 超时", x: 1470, y: 200 }
 ];
 
 const edges: TopologyEdge[] = [

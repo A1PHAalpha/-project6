@@ -24,7 +24,7 @@ load_project_env()
 from collector import db
 from collector.collector_snmp import collect_device_snmp
 from collector.collector_ssh import collect_device
-from collector.connectivity_test import collect_terminal_ping
+from collector.connectivity_test import collect_router_ping, collect_terminal_ping
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("run_collect")
@@ -174,6 +174,7 @@ def run_collection(
         mode = "full"
 
     hq_server = next((device for device in devices if device["device_name"] == "HQ-SRV"), None)
+    hq_router = next((device for device in devices if device["device_name"] == "HQ-R1"), None)
     scope_type = "batch" if len(selected) > 1 else "device"
     capture_result_type = result_type or (
         "single" if trigger_type in ("llm_tool", "mcp") else "full"
@@ -219,24 +220,35 @@ def run_collection(
                 snmp_summary.append({"device_name": device_name, "result": snmp_result})
                 results.append(snmp_result)
 
-            if (
-                device.get("device_type") == "linux"
-                and hq_server
-                and device_name != "HQ-SRV"
-                and hq_server.get("mgmt_ip")
-            ):
-                ping_result = collect_terminal_ping(
-                    device,
-                    hq_server["mgmt_ip"],
-                    username,
-                    password,
-                )
-                results.append(ping_result)
-                connectivity_tests += 1
-                if _result_ok(ping_result):
-                    connectivity_successes += 1
-                else:
-                    connectivity_failures += 1
+            if device.get("device_type") == "linux":
+                ping_result = None
+                if hq_router and device.get("mgmt_ip"):
+                    # VPCS terminals have no SSH server; use a router that can
+                    # reach the terminal subnet as the ping source.
+                    ping_result = collect_router_ping(
+                        hq_router,
+                        device["mgmt_ip"],
+                        username,
+                        password,
+                    )
+                elif (
+                    hq_server
+                    and device_name != "HQ-SRV"
+                    and hq_server.get("mgmt_ip")
+                ):
+                    ping_result = collect_terminal_ping(
+                        device,
+                        hq_server["mgmt_ip"],
+                        username,
+                        password,
+                    )
+                if ping_result:
+                    results.append(ping_result)
+                    connectivity_tests += 1
+                    if _result_ok(ping_result):
+                        connectivity_successes += 1
+                    else:
+                        connectivity_failures += 1
 
             _insert_results(result_id, device["device_id"], results)
             overall, reachability, error_message = _device_overall(results)
