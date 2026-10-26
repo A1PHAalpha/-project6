@@ -14,7 +14,7 @@ from netmiko.exceptions import NetmikoTimeoutException
 
 from rag_engine.sanitize import sanitize_text
 
-from .whitelist_commands import READONLY_COMMANDS
+from .whitelist_commands import get_collection_commands
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("collector_ssh")
@@ -29,6 +29,19 @@ CAPTURE_TYPES = {
     "access_list": "acl",
     "arp_table": "arp",
 }
+
+_INVALID_OUTPUT_MARKERS = (
+    "% invalid input",
+    "% incomplete command",
+    "% ambiguous command",
+    "% unrecognized command",
+)
+
+
+def is_invalid_command_output(output: str) -> bool:
+    """Detect Cisco CLI error markers that Netmiko returns as normal text."""
+    text = str(output or "").lower()
+    return any(marker in text for marker in _INVALID_OUTPUT_MARKERS)
 
 
 def _utc_now() -> str:
@@ -75,7 +88,7 @@ def collect_device(device: dict, username: str, password: str, timeout: int = 15
     """
     device_name = device["device_name"]
     device_type = device["device_type"]
-    commands = READONLY_COMMANDS.get(device_type, {})
+    commands = get_collection_commands(device)
     if device_type == "linux":
         logger.info("[%s] Linux 设备不走网络设备 SSH 命令集", device_name)
         return []
@@ -127,6 +140,28 @@ def collect_device(device: dict, username: str, password: str, timeout: int = 15
             try:
                 output = conn.send_command(command, read_timeout=timeout)
                 safe_output = sanitize_text(output)
+                if is_invalid_command_output(safe_output):
+                    logger.warning(
+                        "[%s] %s 返回命令错误提示", device_name, item
+                    )
+                    results.append(
+                        {
+                            "item": item,
+                            "command": command,
+                            "status": "failed",
+                            "source": "ssh",
+                            "capture_type": CAPTURE_TYPES.get(item, "command"),
+                            "started_at": command_started,
+                            "finished_at": _utc_now(),
+                            "error_code": "invalid_command_output",
+                            "fail_reason": "设备返回命令错误提示",
+                            "raw_output": safe_output,
+                            "parsed": {
+                                "line_count": len(safe_output.splitlines())
+                            },
+                        }
+                    )
+                    continue
                 results.append(
                     {
                         "item": item,

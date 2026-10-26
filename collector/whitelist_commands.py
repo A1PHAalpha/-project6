@@ -37,3 +37,35 @@ def is_readonly_command(device_type: str, command: str) -> bool:
 
 def get_command(device_type: str, item: str) -> str:
     return READONLY_COMMANDS.get(device_type, {}).get(item)
+
+
+def _device_text(device: dict) -> str:
+    return f"{device.get('model') or ''} {device.get('role') or ''}".lower()
+
+
+def _looks_like_switch(device: dict) -> bool:
+    text = _device_text(device)
+    return any(marker in text for marker in ("iosvl2", "switch", "交换机"))
+
+
+def _looks_like_router(device: dict) -> bool:
+    text = _device_text(device)
+    return any(marker in text for marker in ("iosv", "router", "路由器"))
+
+
+def get_collection_commands(device: dict) -> dict[str, str]:
+    """Return the read-only command set for a device role.
+
+    Cisco IOS routers do not implement the switch-only ``show vlan brief``
+    command. Unknown profiles keep the full command set to avoid silently
+    removing capabilities.
+    """
+    device_type = device.get("device_type") or ""
+    commands = dict(READONLY_COMMANDS.get(device_type, {}))
+    if (
+        device_type == "cisco_ios"
+        and _looks_like_router(device)
+        and not _looks_like_switch(device)
+    ):
+        commands.pop("vlan_brief", None)
+    return commands
