@@ -90,6 +90,9 @@ APP_AUTO_COLLECT=false
 LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-plus
+LLM_MAX_TOKENS=3000
+LLM_TEMPERATURE=0.2
+LLM_TIMEOUT=60
 
 DEVICE_USERNAME=admin
 DEVICE_PASSWORD=change_me
