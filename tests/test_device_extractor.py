@@ -25,3 +25,16 @@ def test_site_keyword_maps_to_site_devices():
 def test_unknown_site_returns_all_devices():
     all_names = {d["device_name"] for d in db.list_devices()}
     assert set(extract_relevant_devices("网络好像有点慢")) == all_names
+
+
+def test_exact_device_names_do_not_expand_to_all_devices():
+    names = extract_relevant_devices("BR-A-R2 和 BR-A-SW2 之间不通")
+    assert set(names) == {"BR-A-R2", "BR-A-SW2"}
+
+
+def test_device_name_is_case_insensitive():
+    assert extract_relevant_devices("hq-r1 的 Gi0/1 状态怎么样") == ["HQ-R1"]
+
+
+def test_management_ip_matches_device():
+    assert extract_relevant_devices("192.168.249.11 的接口状态") == ["HQ-R1"]
