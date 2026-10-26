@@ -26,6 +26,13 @@ def test_vlan_and_route_and_acl_and_dhcp_categories():
     assert _detect_category("DHCP 地址池耗尽") == "DHCP"
 
 
+def test_access_failure_detected_as_interface_fault():
+    assert (
+        _detect_category("分支A的终端无法访问总部服务器了")
+        == "接口故障"
+    )
+
+
 def test_normal_query_detected_as_general_troubleshooting():
     assert (
         _detect_category("帮忙检查一下总部和分支A之间的网络现在是否正常。")
