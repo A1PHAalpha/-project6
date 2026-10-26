@@ -53,6 +53,10 @@ _CATEGORY_RULES = (
             "line protocol",
         ),
     ),
+    (
+        "通用排查方法",
+        ("是否正常", "正常吗", "无故障", "巡检", "检查一下"),
+    ),
 )
 
 _QUERY_EXPANSIONS = {

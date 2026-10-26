@@ -26,6 +26,13 @@ def test_vlan_and_route_and_acl_and_dhcp_categories():
     assert _detect_category("DHCP 地址池耗尽") == "DHCP"
 
 
+def test_normal_query_detected_as_general_troubleshooting():
+    assert (
+        _detect_category("帮忙检查一下总部和分支A之间的网络现在是否正常。")
+        == "通用排查方法"
+    )
+
+
 def test_link_down_query_expands_to_interface_terms():
     expanded = _expand_query("路由器与交换机之间不通")
     assert "接口" in expanded
