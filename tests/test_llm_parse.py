@@ -27,7 +27,17 @@ def test_safe_parse_json_normalizes_text_and_list_fields():
                 "observation_id": "obs_1",
                 "device_name": "HQ-R1",
                 "finding": ["接口 up"],
-            }
+            },
+            {
+                "observation_id": "null",
+                "device_name": "HQ-R1",
+                "finding": "无观测 ID",
+            },
+            {
+                "observation_id": "无",
+                "device_name": "HQ-R1",
+                "finding": "中文占位",
+            },
         ],
         "possible_causes": ["无明确故障原因"],
         "check_steps": "show ip interface brief",
@@ -52,3 +62,5 @@ def test_safe_parse_json_normalizes_text_and_list_fields():
     assert out["fix_suggestions"][0]["kb_refs"] == ["KB-GEN-001"]
     assert isinstance(out["fix_suggestions"][0]["command"], str)
     assert out["evidence_used"][0]["finding"] == "接口 up"
+    assert out["evidence_used"][1]["observation_id"] is None
+    assert out["evidence_used"][2]["observation_id"] is None

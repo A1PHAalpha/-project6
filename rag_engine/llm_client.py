@@ -142,6 +142,13 @@ def _as_text(value) -> str:
     return str(value)
 
 
+def _nullable_text(value) -> str | None:
+    text = _as_text(value).strip()
+    if text.lower() in ("", "null", "none", "无", "-"):
+        return None
+    return text
+
+
 def _as_list(value) -> list:
     if value is None:
         return []
@@ -187,6 +194,8 @@ def _normalize_answer(answer) -> dict | None:
         if isinstance(item, dict):
             entry = dict(item)
             entry["finding"] = _as_text(entry.get("finding"))
+            for key in ("observation_id", "device_name", "collected_at"):
+                entry[key] = _nullable_text(entry.get(key))
             evidence.append(entry)
         elif item:
             evidence.append(
@@ -222,13 +231,9 @@ def _normalize_answer(answer) -> dict | None:
         if isinstance(item, dict):
             suggestion = dict(item)
             suggestion["action"] = _as_text(suggestion.get("action"))
-            suggestion["command"] = (
-                _as_text(suggestion.get("command"))
-                if suggestion.get("command") not in (None, "")
-                else None
-            )
-            suggestion["target_device"] = (
-                _as_text(suggestion.get("target_device")) or None
+            suggestion["command"] = _nullable_text(suggestion.get("command"))
+            suggestion["target_device"] = _nullable_text(
+                suggestion.get("target_device")
             )
             suggestion["kb_refs"] = _as_refs(suggestion.get("kb_refs"))
             suggestion["requires_manual_confirmation"] = bool(
