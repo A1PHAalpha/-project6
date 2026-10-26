@@ -59,7 +59,8 @@ EXPECTED_BY_ID: dict[str, dict[str, Any]] = {
         "require_recheck": True,
     },
     "NORMAL_01": {
-        "must_mention": ["正常", "无故障"],
+        "must_mention": [],
+        "must_mention_any": ["正常", "无故障", "未发现异常", "未发现故障"],
         "expected_devices": ["HQ-R1"],
         "forbidden": ["链路中断", "默认路由缺失", "ACL 误拦截", "shutdown"],
         "require_recheck": False,
@@ -79,6 +80,7 @@ def expected_for_scenario(scenario: dict) -> dict:
     """返回场景的机器可读期望；未登记的场景使用保守默认值。"""
     expected = {
         "must_mention": [],
+        "must_mention_any": [],
         "expected_devices": [],
         "forbidden": [],
         "require_recheck": True,
@@ -128,13 +130,23 @@ def score_answer(answer: dict, expected: dict) -> dict:
     text = answer_text(answer or {})
     lowered = text.lower()
     must_terms = [str(term) for term in expected.get("must_mention") or []]
+    any_terms = [str(term) for term in expected.get("must_mention_any") or []]
     expected_devices = [str(term) for term in expected.get("expected_devices") or []]
     forbidden = [str(term) for term in expected.get("forbidden") or []]
     matched = [term for term in must_terms if term.lower() in lowered]
     missing = [term for term in must_terms if term.lower() not in lowered]
+    any_matched = [term for term in any_terms if term.lower() in lowered]
+    if any_terms:
+        if any_matched:
+            matched.extend(any_matched)
+            mention_ratio = 1.0
+        else:
+            missing.extend(any_terms)
+            mention_ratio = 0.0
+    else:
+        mention_ratio = len(matched) / len(must_terms) if must_terms else 1.0
     device_matches = [term for term in expected_devices if term.lower() in lowered]
     forbidden_hits = [term for term in forbidden if term.lower() in lowered]
-    mention_ratio = len(matched) / len(must_terms) if must_terms else 1.0
     device_ratio = (
         len(device_matches) / len(expected_devices) if expected_devices else 1.0
     )

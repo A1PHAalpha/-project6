@@ -54,6 +54,22 @@ def test_score_answer_marks_model_error():
     assert result["correctness"] == "error"
 
 
+def test_normal_accepts_synonyms_for_no_fault():
+    scenario = get_scenario("NORMAL_01")
+    expected = expected_for_scenario(scenario)
+    result = score_answer(
+        {
+            "fault_phenomenon": "HQ-R1 与分支A之间网络未发现异常",
+            "possible_causes": [],
+            "fix_suggestions": [],
+            "recheck_method": "ping 192.168.200.10",
+            "missing_information": "无",
+        },
+        expected,
+    )
+    assert result["correctness"] == "correct"
+
+
 def test_aggregate_and_evidence_hash():
     results = [
         {

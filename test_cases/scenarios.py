@@ -236,7 +236,7 @@ SCENARIOS = [
                 "raw_output": (
                     "Interface              IP-Address      OK? Method Status                Protocol\n"
                     "GigabitEthernet0/0     192.168.100.1   YES NVRAM  up                    up\n"
-                    "GigabitEthernet0/1     192.168.100.1   YES NVRAM  up                    up\n"
+                    "GigabitEthernet0/1     192.168.200.1   YES NVRAM  up                    up\n"
                 ),
                 "parsed": {"item": "interface_status", "up_count": 2, "down_count": 0},
             },
@@ -245,21 +245,114 @@ SCENARIOS = [
                 "status": "success",
                 "command": "show ip route",
                 "raw_output": (
-                    "Gateway of last resort is 192.168.100.254 to network 0.0.0.0\n\n"
-                    "S*   0.0.0.0/0 [1/0] via 192.168.100.254\n"
-                    "     192.168.100.0/24 is directly connected, GigabitEthernet0/0\n"
+                    "Gateway of last resort is not set\n\n"
+                    "S    192.168.10.0/24 [1/0] via 192.168.100.2\n"
+                    "     192.168.200.0/24 is directly connected, GigabitEthernet0/1\n"
+                ),
+                "parsed": {"item": "route_table", "has_default_route": False},
+            },
+            {
+                "device_name": "BR-A-R2",
+                "status": "success",
+                "command": "show ip interface brief",
+                "raw_output": (
+                    "Interface              IP-Address      OK? Method Status                Protocol\n"
+                    "GigabitEthernet0/0     192.168.100.2   YES NVRAM  up                    up\n"
+                    "GigabitEthernet0/1     192.168.10.1    YES NVRAM  up                    up\n"
+                ),
+                "parsed": {"item": "interface_status", "up_count": 2, "down_count": 0},
+            },
+            {
+                "device_name": "BR-A-R2",
+                "status": "success",
+                "command": "show ip route",
+                "raw_output": (
+                    "Gateway of last resort is 192.168.100.1 to network 0.0.0.0\n\n"
+                    "S*   0.0.0.0/0 [1/0] via 192.168.100.1\n"
+                    "S    192.168.200.0/24 [1/0] via 192.168.100.1\n"
+                    "     192.168.10.0/24 is directly connected, GigabitEthernet0/1\n"
                 ),
                 "parsed": {"item": "route_table", "has_default_route": True},
             },
             {
                 "device_name": "BR-A-PC",
                 "status": "success",
-                "command": "ping 192.168.10.100",
+                "command": "show ip interface brief",
+                "raw_output": (
+                    "Interface              IP-Address      OK? Method Status                Protocol\n"
+                    "GigabitEthernet0/0     192.168.10.10   YES NVRAM  up                    up\n"
+                ),
+                "parsed": {"item": "interface_status", "up_count": 1, "down_count": 0},
+            },
+            {
+                "device_name": "HQ-R1",
+                "status": "success",
+                "command": "ping 192.168.10.10",
+                "raw_output": "Success rate is 100 percent (5/5), round-trip min/avg/max = 1/1/1 ms",
+                "parsed": {"target_ip": "192.168.10.10", "reachable": True, "success_rate": 100},
+            },
+            {
+                "device_name": "BR-A-R2",
+                "status": "success",
+                "command": "ping 192.168.200.10",
+                "raw_output": "Success rate is 100 percent (5/5), round-trip min/avg/max = 1/1/1 ms",
+                "parsed": {"target_ip": "192.168.200.10", "reachable": True, "success_rate": 100},
+            },
+            {
+                "device_name": "HQ-R1",
+                "status": "success",
+                "command": "show access-lists",
+                "raw_output": "",
+                "parsed": {"item": "access_list", "acl_present": False},
+            },
+            {
+                "device_name": "BR-A-R2",
+                "status": "success",
+                "command": "show access-lists",
+                "raw_output": "",
+                "parsed": {"item": "access_list", "acl_present": False},
+            },
+            {
+                "device_name": "HQ-SRV",
+                "status": "success",
+                "command": "show ip interface brief",
+                "raw_output": (
+                    "Interface              IP-Address      OK? Method Status                Protocol\n"
+                    "Ethernet0              192.168.200.10  YES NVRAM  up                    up\n"
+                ),
+                "parsed": {"item": "interface_status", "up_count": 1, "down_count": 0},
+            },
+            {
+                "device_name": "BR-A-SW2",
+                "status": "success",
+                "command": "show vlan brief",
+                "raw_output": (
+                    "VLAN Name                             Status    Ports\n"
+                    "1    default                          active    Gi0/2\n"
+                    "10   USERS                            active    Gi0/1\n"
+                ),
+                "parsed": {"item": "vlan_brief", "vlan_lines": ["10   USERS"]},
+            },
+            {
+                "device_name": "HQ-SW1",
+                "status": "success",
+                "command": "show vlan brief",
+                "raw_output": (
+                    "VLAN Name                             Status    Ports\n"
+                    "1    default                          active    Gi0/2\n"
+                    "20   SERVERS                          active    Gi0/1\n"
+                ),
+                "parsed": {"item": "vlan_brief", "vlan_lines": ["20   SERVERS"]},
+            },
+            {
+                "device_name": "BR-A-PC",
+                "status": "success",
+                "command": "ping 192.168.200.10",
                 "raw_output": "4 packets transmitted, 4 received, 0% packet loss",
-                "parsed": {"purpose": "分支A到总部服务器连通性测试", "target_ip": "192.168.10.100", "reachable": True},
+                "parsed": {"purpose": "分支A到总部服务器连通性测试", "target_ip": "192.168.200.10", "reachable": True},
             },
         ],
-        "expected_notes": "所有证据均显示正常（接口up、缺省路由存在、ping成功），模型应判断当前无故障，不应为了'配合问题'而编造异常。",
+        "expected_notes": "所有证据均显示正常（接口up、静态路由存在、VLAN正常、ping成功），模型应判断当前无故障，不应为了'配合问题'而编造异常。",
     },
 
     # ---------- 6. 证据不足案例 ----------
