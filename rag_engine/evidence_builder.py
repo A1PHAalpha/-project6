@@ -13,6 +13,34 @@ from collector import db
 
 EVIDENCE_STALE_MINUTES = 30
 MAX_OBSERVATIONS_PER_DEVICE = 80
+MAX_EVIDENCE_ITEMS = 30
+MAX_EVIDENCE_PER_DEVICE = 12
+
+_FAULT_STATE_PRIORITY = {
+    "route": 2,
+    "acl": 3,
+    "vlan": 4,
+    "neighbor": 5,
+    "interface": 6,
+    "arp": 7,
+    "system": 8,
+    "config": 9,
+    "command_output": 10,
+}
+
+_EVIDENCE_STATE_QUOTA = {
+    "reachability": 2,
+    "interface": 4,
+    "route": 4,
+    "vlan": 3,
+    "acl": 2,
+    "neighbor": 3,
+    "arp": 2,
+    "system": 1,
+    "config": 1,
+    "command_output": 1,
+}
+_DEFAULT_STATE_QUOTA = 2
 
 _STATE_PRIORITY = {
     "reachability": 0,
@@ -45,6 +73,102 @@ def _short(value, limit: int = 180) -> str:
     return text[:limit] + ("..." if len(text) > limit else "")
 
 
+def _observation_priority(observation: dict) -> int:
+    """Lower is more useful for diagnosis; down/unreachable facts come first."""
+    state_type = observation.get("state_type")
+    payload = observation.get("payload") or {}
+    if state_type == "reachability":
+        return 0 if payload.get("reachable") is False else 4
+    if state_type == "interface":
+        status = str(payload.get("status") or payload.get("oper_status") or "").lower()
+        admin = str(payload.get("admin_status") or "").lower()
+        if "down" in status and "down" not in admin:
+            # Link/protocol down while administratively enabled is the fault signal.
+            return 0
+        if "down" in admin:
+            # An administratively down port is often unused; keep it but do not
+            # let it crowd out routes, VLANs, ACLs and actual link failures.
+            return 7
+        return 6
+    return _FAULT_STATE_PRIORITY.get(state_type, 10)
+
+
+def _diversify_bucket(items: list[dict]) -> list[dict]:
+    """Prefer at least a few facts from each state category before filling."""
+    ordered = sorted(
+        items,
+        key=lambda item: (item.get("priority", 99), item.get("collected_at") or ""),
+    )
+    selected: list[dict] = []
+    selected_ids: set[int] = set()
+    counts: dict[str, int] = {}
+    for item in ordered:
+        state_type = item.get("state_type") or "other"
+        quota = _EVIDENCE_STATE_QUOTA.get(state_type, _DEFAULT_STATE_QUOTA)
+        if counts.get(state_type, 0) >= quota:
+            continue
+        selected.append(item)
+        selected_ids.add(id(item))
+        counts[state_type] = counts.get(state_type, 0) + 1
+    for item in ordered:
+        if id(item) not in selected_ids:
+            selected.append(item)
+    return selected
+
+
+def select_compact_evidence(
+    evidence: list[dict], limit: int = MAX_EVIDENCE_ITEMS
+) -> list[dict]:
+    """Keep a bounded, fault-focused evidence set while representing every device."""
+    if limit <= 0:
+        return []
+    if len(evidence) <= limit:
+        return list(evidence)
+
+    buckets: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for item in evidence:
+        device_name = item.get("device_name") or "unknown"
+        if device_name not in buckets:
+            buckets[device_name] = []
+            order.append(device_name)
+        buckets[device_name].append(item)
+
+    per_device_limit = MAX_EVIDENCE_PER_DEVICE if len(order) > 1 else limit
+    for device_name in order:
+        buckets[device_name] = _diversify_bucket(buckets[device_name])
+
+    selected: list[dict] = []
+    # Ensure every device with evidence is represented.
+    for device_name in order:
+        if buckets[device_name] and len(selected) < limit:
+            selected.append(buckets[device_name].pop(0))
+
+    # Fill per-device buckets without letting one device crowd out the rest.
+    for device_name in order:
+        while buckets[device_name] and len(selected) < limit:
+            device_count = sum(
+                1 for item in selected if item.get("device_name") == device_name
+            )
+            if device_count >= per_device_limit:
+                break
+            selected.append(buckets[device_name].pop(0))
+
+    remaining = [item for device_name in order for item in buckets[device_name]]
+    remaining.sort(
+        key=lambda item: (item.get("priority", 99), item.get("collected_at") or "")
+    )
+    selected.extend(remaining[: max(0, limit - len(selected))])
+
+    selected.sort(
+        key=lambda item: (
+            order.index(item.get("device_name") or "unknown"),
+            item.get("priority", 99),
+        )
+    )
+    return selected
+
+
 def _summarize_observation(observation: dict) -> str:
     state_type = observation.get("state_type")
     payload = observation.get("payload") or {}
@@ -58,9 +182,16 @@ def _summarize_observation(observation: dict) -> str:
             + (f"；错误={payload.get('error')}" if payload.get("error") else "")
         )
     if state_type == "interface":
+        status = str(payload.get("status") or payload.get("oper_status") or "").lower()
+        admin = str(payload.get("admin_status") or "").lower()
+        note = ""
+        if "down" in admin:
+            note = "（管理性关闭，可能是未使用端口）"
+        elif "down" in status:
+            note = "（链路/协议异常）"
         return (
             f"接口 {entity_key}: status={payload.get('status') or payload.get('oper_status')}, "
-            f"admin={payload.get('admin_status')}, ip={payload.get('ip_address') or '未配置'}"
+            f"admin={payload.get('admin_status')}, ip={payload.get('ip_address') or '未配置'}{note}"
         )
     if state_type == "route":
         return (
@@ -89,7 +220,10 @@ def _summarize_observation(observation: dict) -> str:
             f"({payload.get('protocol')})"
         )
     if state_type == "system":
-        return f"系统状态 {entity_key}: {json.dumps(payload, ensure_ascii=False)}"
+        return (
+            f"系统状态 {entity_key}: "
+            f"{_short(json.dumps(payload, ensure_ascii=False), 260)}"
+        )
     if state_type == "config":
         return (
             f"配置快照 {entity_key}: {payload.get('line_count')} 行, "
@@ -148,6 +282,7 @@ def build_evidence_for_devices(device_names: list) -> list:
                     "summary": "该设备尚无已发布的采集结果，无法提供当前证据。",
                     "observation_id": None,
                     "run_id": None,
+                    "priority": 9,
                 }
             )
             continue
@@ -172,6 +307,7 @@ def build_evidence_for_devices(device_names: list) -> list:
                     "summary": summary,
                     "observation_id": None,
                     "run_id": result.get("run_id"),
+                    "priority": 0 if result.get("overall_status") == "failed" else 9,
                 }
             )
             continue
@@ -191,9 +327,11 @@ def build_evidence_for_devices(device_names: list) -> list:
                     "entity_key": observation.get("entity_key"),
                     "source": observation.get("source"),
                     "is_stale": _is_stale(observation.get("observed_at_utc")),
+                    "priority": _observation_priority(observation)
+                    + (20 if _is_stale(observation.get("observed_at_utc")) else 0),
                 }
             )
-    return evidence
+    return select_compact_evidence(evidence)
 
 
 def format_evidence_for_prompt(evidence: list) -> str:
