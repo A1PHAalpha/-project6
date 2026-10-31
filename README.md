@@ -14,10 +14,20 @@
 - Node.js 18 或更高版本
 - 首次安装依赖和下载 Embedding 模型时可访问网络
 
-在项目根目录执行：
+在项目根目录执行。
+
+Windows PowerShell：
 
 ```powershell
 python start.py
+```
+
+Linux / macOS：
+
+```bash
+python3 start.py
+# 项目 .venv 已存在时，优先使用项目解释器
+.venv/bin/python start.py
 ```
 
 这是唯一用户启动入口。它会逐级检查并准备：
@@ -53,8 +63,134 @@ python start.py
 查看完整帮助：
 
 ```powershell
+# Windows
 python start.py --help
 ```
+
+```bash
+# Linux / macOS
+python3 start.py --help
+.venv/bin/python start.py --help
+```
+
+## Linux 运行说明
+
+以下命令适用于 Ubuntu/Debian 等常见 Linux 发行版。项目仍以根目录 `start.py` 为唯一启动入口。
+
+### 1. 检查环境
+
+```bash
+cd /path/to/project6
+
+python3 --version      # 需要 Python 3.12 x64
+node --version         # 需要 Node.js 18+
+npm --version
+```
+
+首次启动时 `start.py` 会自动创建 `.venv` 并安装缺失依赖。也可以手动准备：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -U pip
+.venv/bin/pip install -r requirements/dev.txt
+```
+
+### 2. 启动服务
+
+```bash
+# Mock 模式：示例数据，不连接真实设备
+python3 start.py
+
+# Live 模式：使用真实 API 和设备数据
+python3 start.py --live
+
+# 项目 .venv 已存在时，推荐直接使用
+.venv/bin/python start.py --live
+
+# 只检查环境，不安装、不构建、不启动
+.venv/bin/python start.py --check
+```
+
+服务默认监听 `http://127.0.0.1:8000`，前台运行时按 `Ctrl+C` 停止。
+
+需要后台运行时：
+
+```bash
+nohup .venv/bin/python start.py --live >/tmp/netops-console.log 2>&1 &
+echo $! >/tmp/netops-console.pid
+
+# 查看日志 / 停止
+tail -f /tmp/netops-console.log
+kill "$(cat /tmp/netops-console.pid)"
+```
+
+端口被占用时，可在 `.env` 中修改 `APP_PORT`，或临时覆盖：
+
+```bash
+APP_PORT=8001 .venv/bin/python start.py --live
+```
+
+### 3. 首次登录
+
+首次启动会在日志中显示随机 `APP_API_TOKEN`，后续可从 `.env` 读取：
+
+```bash
+grep '^APP_API_TOKEN=' .env
+```
+
+浏览器打开 `http://127.0.0.1:8000/login`，输入该口令。
+
+### 4. 真实网络接入（Linux）
+
+ZeroTier、EVE-NG 路由和设备网络与应用启动解耦：
+
+```bash
+chmod +x scripts/connect_remote_network_legacy.sh
+sudo scripts/connect_remote_network_legacy.sh --no-collect
+```
+
+脚本只读取项目 `.env`。普通 `python3 start.py` 不会执行 `sudo`、修改系统路由或连接
+远程实验网。管理网路由持久化、ZeroTier peer 检查和 EVE 入口说明见：
+
+- [docs/NETWORK_CONNECTION_GUIDE.md](docs/NETWORK_CONNECTION_GUIDE.md)
+
+### 5. 开发与测试
+
+```bash
+# 后端测试和静态检查
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check .
+.venv/bin/python -m compileall -q collector control rag_engine knowledge_base ops_tools webapp
+
+# 前端测试和构建
+cd frontend
+npm test
+npm run build
+```
+
+后端热重载开发：
+
+```bash
+.venv/bin/python -m uvicorn webapp.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端独立开发：
+
+```bash
+cd frontend
+VITE_USE_MOCK_API=false npm run dev
+```
+
+### 6. Linux 常见问题
+
+| 现象 | 处理 |
+|---|---|
+| `python: command not found` | 使用 `python3`，或安装 Python 3.12 |
+| `No module named ...` | 使用 `.venv/bin/python`，不要用系统 Python |
+| `zerotier-cli` 提示缺少 authtoken | 使用 `sudo zerotier-cli ...` |
+| 脚本 `Permission denied` | `chmod +x scripts/connect_remote_network_legacy.sh` |
+| 端口被占用 | 修改 `.env` 的 `APP_PORT`，或停止已有进程 |
+| 启动日志出现 `telnetlib` 弃用警告 | Netmiko 已知警告，不影响运行 |
 
 ## 访问入口
 
@@ -125,6 +261,8 @@ docs/                 架构、开发、运维和设计文档
 React 控制台是默认业务前端；旧版 Jinja 页面在迁移期间继续可用，旧 URL 不变。
 
 ## 开发与验证
+
+以下命令以 Windows PowerShell 为例；Linux 对应命令见前文“Linux 运行说明”。
 
 只检查环境：
 
