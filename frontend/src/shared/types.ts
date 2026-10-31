@@ -186,6 +186,16 @@ export interface DiagnosisSession {
     note: string;
     requiresManualConfirmation: boolean;
   } | null;
+  recheckMethod: string;
+  manualActions: Array<{
+    id: number;
+    createdAt: string;
+    operator: string;
+    action: string;
+    backupRef: string | null;
+    recheckResult: string | null;
+    status: string;
+  }>;
   missingInformation: string;
   messages: DiagnosisMessage[];
 }

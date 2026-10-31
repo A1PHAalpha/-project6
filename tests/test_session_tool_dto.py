@@ -11,7 +11,11 @@ def test_tool_call_dto_exposes_device_name(tmp_path, monkeypatch):
         prompt_template_id="diagnosis_v2",
         prompt_version=None,
         llm_params={},
-        answer={"fault_phenomenon": "测试", "possible_causes": []},
+        answer={
+            "fault_phenomenon": "测试",
+            "possible_causes": [],
+            "recheck_method": "ping 10.10.10.100",
+        },
         evidence=[],
         retrieved_docs=[],
         use_kb=False,
@@ -22,6 +26,14 @@ def test_tool_call_dto_exposes_device_name(tmp_path, monkeypatch):
         context_messages=[],
         session_id=None,
     )
+    db.insert_manual_action(
+        diagnosis_id=saved["diagnosis_id"],
+        operator="tester",
+        action_desc="人工修复",
+        backup_ref="/tmp/backup.cfg",
+        recheck_result="ping 100%",
+        status="completed",
+    )
     call = db.start_tool_call(
         "query_device_state",
         {"device_names": ["HQ-R1"]},
@@ -30,3 +42,6 @@ def test_tool_call_dto_exposes_device_name(tmp_path, monkeypatch):
     db.finish_tool_call(call["tool_call_id"], status="success", result={"ok": True})
     dto = _session_detail_dto(saved["session_id"])
     assert dto["toolCalls"][0]["deviceName"] == "HQ-R1"
+    assert dto["recheckMethod"] == "ping 10.10.10.100"
+    assert dto["manualActions"][0]["operator"] == "tester"
+    assert dto["manualActions"][0]["backupRef"] == "/tmp/backup.cfg"

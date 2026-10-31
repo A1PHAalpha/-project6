@@ -514,6 +514,37 @@ export function AiWorkspace({
             </section>
           ) : null}
 
+          {session?.recheckMethod ? (
+            <section className="chat-card">
+              <div className="chat-card-heading">
+                <strong>复测方法</strong>
+              </div>
+              <p>{session.recheckMethod}</p>
+            </section>
+          ) : null}
+
+          {session?.manualActions.length ? (
+            <section className="chat-card">
+              <div className="chat-card-heading">
+                <strong>人工处理记录</strong>
+                <span>{session.manualActions.length} 条</span>
+              </div>
+              <div className="chat-evidence-list">
+                {session.manualActions.map((action) => (
+                  <div className="chat-evidence tone-success" key={action.id}>
+                    <span>
+                      <strong>{action.operator} · {action.status}</strong>
+                      <small>{new Date(action.createdAt).toLocaleString("zh-CN")}</small>
+                    </span>
+                    <p>{action.action}</p>
+                    {action.backupRef ? <em className="mono">备份: {action.backupRef}</em> : null}
+                    {action.recheckResult ? <em>复测: {action.recheckResult}</em> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {session?.knowledge.length ? (
             <section className="chat-card knowledge-card">
               <div className="chat-card-heading">

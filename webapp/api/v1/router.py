@@ -387,6 +387,11 @@ def _session_detail_dto(session_id: str) -> dict | None:
         db._json_value(diagnosis["evidence_json"]) or [] if diagnosis else []
     )
     answer = db._json_value(diagnosis["answer_json"]) or {} if diagnosis else {}
+    manual_actions = (
+        db.list_manual_actions(diagnosis_id=diagnosis["id"])
+        if diagnosis
+        else []
+    )
     causes = []
     for cause in answer.get("possible_causes") or []:
         if isinstance(cause, dict):
@@ -478,6 +483,19 @@ def _session_detail_dto(session_id: str) -> dict | None:
         ),
         "causes": causes,
         "suggestion": _suggestion_dto(answer, evidence),
+        "recheckMethod": answer.get("recheck_method") or "",
+        "manualActions": [
+            {
+                "id": action["id"],
+                "createdAt": action.get("created_at"),
+                "operator": action.get("operator") or "",
+                "action": action.get("action_desc") or "",
+                "backupRef": action.get("backup_ref"),
+                "recheckResult": action.get("recheck_result"),
+                "status": action.get("status") or "",
+            }
+            for action in manual_actions
+        ],
         "missingInformation": (
             conclusion.get("missing_information")
             or answer.get("missing_information")

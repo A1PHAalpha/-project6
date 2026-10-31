@@ -340,6 +340,18 @@ export const mockSession: DiagnosisSession = {
     note: "先核对物理链路和接口状态；当前建议只包含人工确认后才可下发的检查命令。",
     requiresManualConfirmation: true
   },
+  recheckMethod: "在 HQ-R1 上 ping 10.20.10.11，确认分支A终端恢复；同时检查 BR-A-R2 接口状态。",
+  manualActions: [
+    {
+      id: 1,
+      createdAt: observedAt,
+      operator: "admin",
+      action: "检查 BR-A-R2 与 BR-A-SW2 互联链路，确认后恢复接口",
+      backupRef: null,
+      recheckResult: "待复测",
+      status: "completed"
+    }
+  ],
   missingInformation: "仅引用 10-20 03:18 已发布批次，没有历史成功状态可作为当前事实。",
   messages: [
     { id: "m1", role: "user", createdAt: "2026-10-20T04:08:00+08:00", content: "分支A的PC无法访问总部服务器，请诊断原因。" },
