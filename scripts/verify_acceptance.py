@@ -168,6 +168,20 @@ def run_audit(db_path: Path, articles_path: Path, reports_dir: Path) -> dict:
 
         latest = _latest_run(conn)
         run_summary = latest.get("summary", {})
+        latest_age_hours = None
+        latest_timestamp = latest.get("published_at") or latest.get("started_at")
+        if latest_timestamp:
+            try:
+                parsed = datetime.fromisoformat(
+                    str(latest_timestamp).replace("Z", "+00:00")
+                )
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                latest_age_hours = (
+                    datetime.now(timezone.utc) - parsed
+                ).total_seconds() / 3600
+            except ValueError:
+                latest_age_hours = None
         ssh_success = _as_int(run_summary.get("ssh_commands_success"))
         ssh_failed = _as_int(run_summary.get("ssh_commands_failed"))
         ssh_total = ssh_success + ssh_failed
@@ -209,6 +223,22 @@ def run_audit(db_path: Path, articles_path: Path, reports_dir: Path) -> dict:
                         _as_int(_scalar(conn, "SELECT COUNT(*) FROM collection_runs WHERE published_at_utc IS NULL OR published_at_utc=''")),
                         0,
                         "==",
+                    ),
+                ),
+                _check(
+                    "C7-latest-age",
+                    "2",
+                    "最新批次时效",
+                    (
+                        f"{latest_age_hours:.1f} 小时"
+                        if latest_age_hours is not None
+                        else "无批次"
+                    ),
+                    "<= 0.5 小时",
+                    (
+                        "PASS"
+                        if latest_age_hours is not None and latest_age_hours <= 0.5
+                        else "WARN"
                     ),
                 ),
             ]
