@@ -2,6 +2,7 @@ from rag_engine.evidence_builder import (
     MAX_EVIDENCE_ITEMS,
     _observation_priority,
     _summarize_observation,
+    build_evidence_for_devices,
     select_compact_evidence,
 )
 
@@ -85,3 +86,59 @@ def test_interface_summary_marks_admin_down_as_possible_unused():
         }
     )
     assert "可能是未使用端口" in summary
+
+
+def test_default_route_has_highest_route_priority():
+    default_route = {
+        "state_type": "route",
+        "payload": {"prefix": "0.0.0.0/0", "protocol": "S*"},
+    }
+    connected_route = {
+        "state_type": "route",
+        "payload": {"prefix": "10.0.0.0/24", "protocol": "C"},
+    }
+    ordinary_route = {
+        "state_type": "route",
+        "payload": {"prefix": "10.99.0.0/16", "protocol": "S"},
+    }
+    assert _observation_priority(default_route) < _observation_priority(ordinary_route)
+    assert _observation_priority(connected_route) < _observation_priority(ordinary_route)
+
+
+def test_default_route_survives_compact_evidence(monkeypatch):
+    from rag_engine import evidence_builder
+
+    def observation(index, prefix, protocol):
+        return {
+            "observation_id": f"obs_{index}",
+            "state_type": "route",
+            "entity_key": prefix,
+            "payload": {"prefix": prefix, "protocol": protocol},
+            "observed_at_utc": "2026-11-01T00:00:00+00:00",
+            "command_or_tool": "show ip route",
+            "run_id": "run_test",
+        }
+
+    observations = [
+        observation(index, f"10.{index}.0.0/16", "S") for index in range(1, 12)
+    ]
+    observations.append(observation(99, "0.0.0.0/0", "S*"))
+    monkeypatch.setattr(
+        evidence_builder.db,
+        "get_current_device_bundle",
+        lambda _name: {
+            "device": {"device_name": "HQ-R1"},
+            "result": {
+                "overall_status": "success",
+                "reachability": "reachable",
+                "run_id": "run_test",
+                "finished_at_utc": "2026-11-01T00:00:00+00:00",
+            },
+            "observations": observations,
+        },
+    )
+
+    evidence = build_evidence_for_devices(["HQ-R1"])
+
+    assert any("0.0.0.0/0" in item["summary"] for item in evidence)
+    assert len(evidence) <= 30

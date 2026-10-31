@@ -90,6 +90,18 @@ def _observation_priority(observation: dict) -> int:
             # let it crowd out routes, VLANs, ACLs and actual link failures.
             return 7
         return 6
+    if state_type == "route":
+        prefix = str(
+            payload.get("prefix") or observation.get("entity_key") or ""
+        )
+        protocol = str(payload.get("protocol") or "").upper()
+        if prefix == "0.0.0.0/0" or protocol == "S*":
+            # Default routes are critical for "normal?" checks and must not be
+            # pushed out by ordinary route entries.
+            return 0
+        if protocol in ("C", "L"):
+            return 1
+        return 3
     return _FAULT_STATE_PRIORITY.get(state_type, 10)
 
 

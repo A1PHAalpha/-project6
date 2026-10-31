@@ -11,6 +11,7 @@ import time
 from collector import db
 from knowledge_base.retriever import retrieve
 
+from .answer_validation import validate_answer
 from .device_extractor import extract_relevant_devices
 from .evidence_builder import (
     build_evidence_for_devices,
@@ -154,6 +155,7 @@ def diagnose(
         }
         error = str(e)
 
+    answer = validate_answer(answer)
     total_response_time_ms = int((time.perf_counter() - started_at) * 1000)
 
     # 6. 原子落盘会话、上下文、检索、模型调用、诊断结论和证据引用。
