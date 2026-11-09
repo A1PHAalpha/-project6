@@ -36,7 +36,8 @@ def _json(value: object) -> str:
 def rescore(
     experiment_id: str,
     *,
-    add_must_mention_any: list[str],
+    add_must_mention_any: list[str] | None = None,
+    replace_must_mention: dict[str, str] | None = None,
     reason: str,
     actor: str = "rescore",
 ) -> dict:
@@ -44,9 +45,14 @@ def rescore(
     if not experiment:
         raise SystemExit(f"experiment not found: {experiment_id}")
     original_summary = dict(experiment.get("summary") or {})
-    additions = [term for term in add_must_mention_any if term]
-    if not additions:
-        raise SystemExit("at least one --add-must-mention-any term is required")
+    additions = [term for term in (add_must_mention_any or []) if term]
+    replacements = {
+        old: new for old, new in (replace_must_mention or {}).items() if old and new
+    }
+    if not additions and not replacements:
+        raise SystemExit(
+            "provide --add-must-mention-any or --replace-must-mention"
+        )
 
     timestamp = _utcnow()
     summary_rows = []
@@ -67,6 +73,12 @@ def rescore(
             if term not in terms:
                 terms.append(term)
         expected["must_mention_any"] = terms
+
+        must_terms = [
+            replacements.get(str(term), str(term))
+            for term in (expected.get("must_mention") or [])
+        ]
+        expected["must_mention"] = must_terms
         case_updates[result["case_id"]] = expected
 
         new_score = score_answer(answer, expected)
@@ -78,6 +90,7 @@ def rescore(
                 "actor": actor,
                 "reason": reason,
                 "added_must_mention_any": additions,
+                "replaced_must_mention": replacements,
                 "previous": previous,
                 "new": {
                     "correctness": new_score["correctness"],
@@ -174,12 +187,23 @@ def main() -> None:
     parser.add_argument("--experiment-id", required=True)
     parser.add_argument(
         "--add-must-mention-any",
-        required=True,
+        default="",
         help="Comma-separated terms; the answer must mention at least one.",
+    )
+    parser.add_argument(
+        "--replace-must-mention",
+        default="",
+        help="Comma-separated old=new term replacements for must_mention.",
     )
     parser.add_argument("--reason", required=True)
     parser.add_argument("--actor", default="rescore")
     args = parser.parse_args()
+    replacements = {}
+    for pair in args.replace_must_mention.split(","):
+        if "=" in pair:
+            old, new = pair.split("=", 1)
+            if old.strip() and new.strip():
+                replacements[old.strip()] = new.strip()
     payload = rescore(
         args.experiment_id,
         add_must_mention_any=[
@@ -187,6 +211,7 @@ def main() -> None:
             for term in args.add_must_mention_any.split(",")
             if term.strip()
         ],
+        replace_must_mention=replacements,
         reason=args.reason,
         actor=args.actor,
     )
