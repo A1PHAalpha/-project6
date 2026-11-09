@@ -102,6 +102,18 @@ def _observation_priority(observation: dict) -> int:
         if protocol in ("C", "L"):
             return 1
         return 3
+    if state_type == "vlan":
+        status = str(payload.get("status") or "").lower()
+        ports = payload.get("ports") or []
+        vlan_id = str(payload.get("vlan_id") or "")
+        if status == "active" and ports and vlan_id != "1":
+            return 0
+        if status == "active" and vlan_id != "1":
+            return 1
+        if status == "active":
+            # Default VLAN is noisy and usually not the fault VLAN.
+            return 5
+        return 8
     return _FAULT_STATE_PRIORITY.get(state_type, 10)
 
 

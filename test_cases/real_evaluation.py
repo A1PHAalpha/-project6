@@ -68,6 +68,10 @@ def run_real_case(
             status="injected",
         )
 
+    latest_runs = db.list_collection_runs_page(page=1, page_size=1)
+    evidence_run_id = (
+        latest_runs["items"][0]["run_id"] if latest_runs["items"] else None
+    )
     active_index = db.get_active_knowledge_index(COLLECTION_NAME)
     experiment_id = db.start_experiment_run(
         suite_id,
@@ -111,6 +115,7 @@ def run_real_case(
                 executability_score=score["executability_score"],
                 diagnosis_id=result.get("diagnosis_id"),
                 conclusion_id=result.get("conclusion_id"),
+                evidence_run_id=evidence_run_id,
                 evidence_hash=evaluation["evidence_hash"],
                 llm_response_time_ms=result.get("response_time_ms"),
                 total_response_time_ms=result.get("total_response_time_ms"),
@@ -143,6 +148,7 @@ def run_real_case(
         summary["case_external_id"] = case_external_id
         summary["question"] = question
         summary["category"] = category
+        summary["evidence_run_id"] = evidence_run_id
         db.finish_experiment_run(experiment_id, status="completed", summary=summary)
         db.record_audit_event(
             actor=created_by,

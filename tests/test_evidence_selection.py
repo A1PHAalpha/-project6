@@ -88,6 +88,23 @@ def test_interface_summary_marks_admin_down_as_possible_unused():
     assert "可能是未使用端口" in summary
 
 
+def test_active_vlan_with_port_beats_default_and_unsupported_vlans():
+    active_with_port = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 20, "status": "active", "ports": ["Ethernet1/0"]},
+    }
+    default_vlan = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 1, "status": "active", "ports": ["Ethernet0/1"]},
+    }
+    unsupported = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 1005, "status": "act/unsup", "ports": []},
+    }
+    assert _observation_priority(active_with_port) < _observation_priority(default_vlan)
+    assert _observation_priority(active_with_port) < _observation_priority(unsupported)
+
+
 def test_default_route_has_highest_route_priority():
     default_route = {
         "state_type": "route",

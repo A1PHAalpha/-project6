@@ -238,3 +238,64 @@ SQLITE_DB_PATH=/tmp/netops_eval.db \
   .venv/bin/python -m test_cases.compare_kb \
   --skip-kb-build --output /tmp/compare_results.json
 ```
+
+---
+
+## 2026-11-09 增量：真实 VLAN 故障试点
+
+本节保留上方 2026-10-27 执行记录与 2026-11-01 更正，不覆盖历史结论。
+
+### 环境与采集
+
+EVE 的 ZeroTier 成员 `89560f78b7` 恢复 `DIRECT` 后，`.218`、6 台设备管理 IP、
+EVE HTTP、控制台端口和设备 SSH 全部恢复。全量真实采集：
+
+```text
+run_a118540622af49cc9427edee09297c3e
+9 台设备；SSH 39/39；终端连通性 3/3；SNMP 3/6（部分设备超时）
+```
+
+### VLAN 试点 1（暴露问题，已更正评分）
+
+```text
+BR-A-SW2 Ethernet1/0 access VLAN 10 -> 20
+故障批次 run_6583d2bfc6dc4397a1e50461b9ace7c4（0/1）
+实验 experiment_ce80695d0b9549ea98f051b560acb113
+诊断 5 / 6
+恢复 run_5f6bb329c6dd41a19e320bf0f8d2fdb5（1/1）
+```
+
+旧评分曾判 `correct`，但复核发现证据选择未把 `VLAN 20: Ethernet1/0` 送入上下文，
+两条回答实际归因到 ACL/trunk，均未点名故障端口。已修复：
+
+- `rag_engine/evidence_builder.py` 提升 active 且带端口 VLAN 的优先级；
+- 评分新增端口断言 `Ethernet1/0` / `Et1/0`；
+- 用 `scripts/rescore_experiment.py` 把诊断 5/6 改为 `wrong`，原始分数保存在
+  `evaluation_json.rescore_history` 并写入 `audit_log`。
+
+### VLAN 试点 2（真实通过）
+
+```text
+BR-A-SW2 Ethernet1/0 access VLAN 10 -> 20（人工确认 + 备份）
+注入备份 reports/backups/BR-A-SW2_20261109_152927.cfg
+故障批次 run_cc8b71d38688498fb7ecee4cbf5945a8（0/1）
+实验 experiment_e28f65065b0242209a32886749a11dee
+诊断 7（有 KB）/ 8（无 KB），均 correct
+命中 VLAN、20、Ethernet1/0、Et1/0
+恢复批次 run_b92a14f6564c458fbfdb83988b9becec（1/1）
+恢复备份 reports/backups/BR-A-SW2_20261109_153125.cfg
+最终配置 Ethernet1/0 access VLAN 10；最终 ping 100%
+报告 reports/diagnosis_7.md、reports/diagnosis_7.html
+人工记录 manual_actions.id=4（completed）
+```
+
+### 当前审计
+
+```text
+PASS：N1–N4；C1–C7；K1–K3；L1–L5；E1；O2–O3；P1–P3
+WARN：K4 source_url 0/26；O1 change_request 0
+FAIL：E2 评测结果 6/20；E3 测试用例 3/10；E4 真实故障注入 2/8
+```
+
+结论：真实 VLAN 故障链路已完整跑通（注入→采集→有/无 KB 诊断→恢复→复测→落库），
+但需求 7 的 10 例/20 条真实故障 campaign 仍未完成。

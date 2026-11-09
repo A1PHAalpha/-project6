@@ -452,3 +452,133 @@ PASS：审计终端 1、人工记录 2、Markdown/HTML 报告、配置备份
 ---
 
 *本报告正文为 2026-10-31 历史审计；第 11 节为 2026-11-01 增量核验。`data/ops.db`、`reports/`、`.env` 等为本地运行产物，已被 `.gitignore` 排除；核验过程只读查询，未写入业务数据。*
+
+---
+
+## 12. 2026-11-09 增量：EVE 数据面恢复与真实 VLAN 故障试点
+
+本节是新的增量核验，不修改第 11 节的历史结论。
+
+### 12.1 环境恢复与全量真实采集
+
+EVE 的 ZeroTier 成员 `89560f78b7` 重新出现并达到 `DIRECT` 后，
+`10.10.146.218`、`192.168.249.11`–`.16`、EVE HTTP、控制台端口和设备 SSH 全部恢复。
+随后执行了一次全量真实采集：
+
+```text
+run_id:            run_a118540622af49cc9427edee09297c3e
+设备数:            9
+SSH:               39 成功 / 0 失败
+终端连通性:        3/3
+状态观测:          1427（随后 VLAN 试点批次累计到 2056）
+SNMP:              3/6 成功（部分设备本次超时，历史批次曾 6/6）
+```
+
+SNMP 本次超时按“采集可靠性问题”记录，不影响 SSH/连通性证据；后续批次
+3 台设备时 SNMP 为 2/2。
+
+### 12.2 VLAN 试点 1：暴露证据选择与评分缺陷
+
+```text
+故障点:      BR-A-SW2 Ethernet1/0
+变更:        switchport access vlan 10 -> 20
+故障批次:    run_6583d2bfc6dc4397a1e50461b9ace7c4
+故障连通性:  0/1
+实验:        experiment_ce80695d0b9549ea98f051b560acb113
+诊断:        diagnosis_id 5（有 KB）/ 6（无 KB）
+恢复批次:    run_5f6bb329c6dd41a19e320bf0f8d2fdb5（1/1）
+```
+
+第一次试点最初被旧评分判为 `correct`，但人工复核发现这是**误判**：
+
+- `show vlan brief` 证据里虽然有 `VLAN 20`，但当时的证据选择把默认/unsupported
+  VLAN 排在了前面，实际没有把 `VLAN 20: Ethernet1/0` 送进模型上下文；
+- 两条回答把根因归到 `preauth_ipv4_acl`、trunk、VLAN 间路由，均未点名
+  `Ethernet1/0` / `Et1/0`；
+- 旧评分只要求命中 `VLAN` 和 `20`，条件过弱。
+
+已做两项修复：
+
+1. `rag_engine/evidence_builder.py`：active 且带端口的非默认 VLAN 优先级最高，
+   默认 VLAN 与 `act/unsup` VLAN 降级；新增回归测试
+   `tests/test_evidence_selection.py::test_active_vlan_with_port_beats_default_and_unsupported_vlans`。
+2. `test_cases/real_evaluation.py`：实验结果持久化 `evidence_run_id`；VLAN 试点评分增加
+   `must_mention_any: ["Ethernet1/0", "Et1/0", "Ethernet 1/0"]`。
+
+旧实验结果已用 `scripts/rescore_experiment.py` 按加强后的标准重算：
+
+```text
+experiment_ce80695d0b9549ea98f051b560acb113
+diagnosis 5: correct -> wrong（缺 Ethernet1/0 / Et1/0）
+diagnosis 6: correct -> wrong（缺 Ethernet1/0 / Et1/0）
+```
+
+原始分数保留在 `experiment_results.evaluation_json.rescore_history`，并写入
+`audit_log`（`evaluation.experiment.rescored`），没有删除原始回答或证据。
+
+### 12.3 VLAN 试点 2：修复后真实通过
+
+```text
+故障点:      BR-A-SW2 Ethernet1/0
+变更:        switchport access vlan 10 -> 20（人工确认 + 备份）
+注入备份:    reports/backups/BR-A-SW2_20261109_152927.cfg
+故障批次:    run_cc8b71d38688498fb7ecee4cbf5945a8
+故障连通性:  0/1
+实验:        experiment_e28f65065b0242209a32886749a11dee
+诊断:        diagnosis_id 7（有 KB）/ 8（无 KB）
+评分:        两条均 correct；命中 VLAN、20、Ethernet1/0、Et1/0
+恢复批次:    run_b92a14f6564c458fbfdb83988b9becec（1/1）
+恢复备份:    reports/backups/BR-A-SW2_20261109_153125.cfg
+人工记录:    manual_actions.id=4（status=completed）
+最终配置:    Ethernet1/0 access VLAN 10
+最终复测:    HQ-R1 -> 10.20.10.11 100%
+报告:        reports/diagnosis_7.md、reports/diagnosis_7.html
+```
+
+本次证据中已明确包含：
+
+```text
+BR-A-SW2 VLAN 20: name=VLAN0020, status=active, ports=Ethernet1/0
+```
+
+### 12.4 当前计数（2026-11-09 审计）
+
+| 项目 | 2026-11-01 | 2026-11-09 |
+|---|---:|---:|
+| 采集批次 | 4 | 9 |
+| 状态观测 | 1014 | 2056 |
+| 模型调用 | 4 | 8 |
+| 诊断记录 | 4 | 8 |
+| 评测实验 | 1 | 3 |
+| 评测结果 | 2 | 6 |
+| 测试用例 | 1 | 3 |
+| 真实故障注入 | 0 | 2 |
+| 人工处理记录 | 2 | 4 |
+
+### 12.5 当前审计结果
+
+```text
+PASS：N1–N4 设备/角色数量
+PASS：C1–C7 采集、观测、SSH 100%、连通性、时效
+PASS：K1–K3 知识库 26 篇、5 类覆盖、元数据完整
+WARN：K4 source_url 0/26
+PASS：L1–L5 模型调用/诊断/检索/上下文/Prompt
+PASS：E1 评测实验 3
+FAIL：E2 评测结果 6/20
+FAIL：E3 测试用例 3/10
+FAIL：E4 真实故障注入 2/8
+WARN：O1 变更单 0
+PASS：O2–O3、P1–P3
+```
+
+### 12.6 仍未完成
+
+- 需求 7 仍差：链路 ×2、VLAN 独立第 2 例、默认路由 ×2、ACL ×2、正常 1、
+  证据不足 1；20 条可查询结果尚未达到；
+- `source_url` 仍为 0/26；
+- 正式 `change_requests` 仍为 0；
+- SNMP 在部分批次会超时，需要继续观察；
+- 除 2026-11-09 的 `REAL_VLAN_02` 外，其余真实故障类型仍需继续做受控注入与复测。
+
+*本节为 2026-11-09 增量核验；所有故障注入、恢复和复测均基于 EVE-NG 真实设备，
+`data/ops.db` 为本地运行产物。*
