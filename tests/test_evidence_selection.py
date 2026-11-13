@@ -48,9 +48,23 @@ def test_compact_evidence_prioritizes_down_interface():
     assert selected[0]["priority"] == 0
 
 
-def test_compact_evidence_default_cap_is_thirty():
+def test_compact_evidence_default_cap_is_bounded():
     evidence = [_item("HQ-R1", i % 5) for i in range(100)]
     assert len(select_compact_evidence(evidence)) == MAX_EVIDENCE_ITEMS
+
+
+def test_acl_from_later_device_survives_compact_evidence():
+    evidence = []
+    for device in ("HQ-SRV", "BR-A-PC", "BR-A-R2", "BR-A-SW2", "HQ-SW1"):
+        evidence.extend(_item(device, i % 3, "route") for i in range(12))
+    evidence.extend(_item("HQ-R1", 1, "route") for _ in range(4))
+    evidence.extend(_item("HQ-R1", 3, "acl") for _ in range(2))
+
+    selected = select_compact_evidence(evidence)
+    assert any(
+        item["device_name"] == "HQ-R1" and item["state_type"] == "acl"
+        for item in selected
+    )
 
 
 def test_system_summary_is_truncated():
@@ -86,6 +100,23 @@ def test_interface_summary_marks_admin_down_as_possible_unused():
         }
     )
     assert "可能是未使用端口" in summary
+
+
+def test_active_vlan_with_port_beats_default_and_unsupported_vlans():
+    active_with_port = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 20, "status": "active", "ports": ["Ethernet1/0"]},
+    }
+    default_vlan = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 1, "status": "active", "ports": ["Ethernet0/1"]},
+    }
+    unsupported = {
+        "state_type": "vlan",
+        "payload": {"vlan_id": 1005, "status": "act/unsup", "ports": []},
+    }
+    assert _observation_priority(active_with_port) < _observation_priority(default_vlan)
+    assert _observation_priority(active_with_port) < _observation_priority(unsupported)
 
 
 def test_default_route_has_highest_route_priority():

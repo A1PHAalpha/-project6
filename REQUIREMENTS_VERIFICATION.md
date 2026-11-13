@@ -5,6 +5,16 @@
 - 核对方式：阅读 README、验收文档、源代码和测试；查询 `data/ops.db` 的采集/诊断/审计记录；运行后端测试、静态检查、前端测试与构建；实际调用本地知识库检索（未调用外部大模型）
 - 核对原则：以当前目录中可复核的代码、数据库记录和报告为准，不以 `docs/ACCEPTANCE_REPORT.md` 的结论替代证据
 
+> **2026-11-09 最新增量（见第 13 节）**
+>
+> 已在真实 EVE-NG 实验网完成“链路 ×2、VLAN ×2、默认路由 ×2、ACL ×2、正常 ×1、
+> 证据不足 ×1”的 campaign：11 个用例、14 个实验、28 条结果、10 次真实故障注入。
+> 有效 campaign（每类取一个最终用例）有知识库准确率 **85.0%**、无知识库 **80.0%**，
+> 有知识库平均可执行性 **0.875**。只读审计 E2/E3/E4 已 PASS；仅剩 K4
+> （`source_url` 0/26）和 O1（无正式变更单）为 WARN。
+>
+> 下方 2026-10-31 正文保留为历史审计，不被本节覆盖。
+
 ## 总体结论
 
 **当前项目不能判定为“8 项需求全部逐条完成”。**
@@ -452,3 +462,283 @@ PASS：审计终端 1、人工记录 2、Markdown/HTML 报告、配置备份
 ---
 
 *本报告正文为 2026-10-31 历史审计；第 11 节为 2026-11-01 增量核验。`data/ops.db`、`reports/`、`.env` 等为本地运行产物，已被 `.gitignore` 排除；核验过程只读查询，未写入业务数据。*
+
+---
+
+## 12. 2026-11-09 增量：EVE 数据面恢复与真实 VLAN 故障试点
+
+本节是新的增量核验，不修改第 11 节的历史结论。
+
+### 12.1 环境恢复与全量真实采集
+
+EVE 的 ZeroTier 成员 `89560f78b7` 重新出现并达到 `DIRECT` 后，
+`10.10.146.218`、`192.168.249.11`–`.16`、EVE HTTP、控制台端口和设备 SSH 全部恢复。
+随后执行了一次全量真实采集：
+
+```text
+run_id:            run_a118540622af49cc9427edee09297c3e
+设备数:            9
+SSH:               39 成功 / 0 失败
+终端连通性:        3/3
+状态观测:          1427（随后 VLAN 试点批次累计到 2056）
+SNMP:              3/6 成功（部分设备本次超时，历史批次曾 6/6）
+```
+
+SNMP 本次超时按“采集可靠性问题”记录，不影响 SSH/连通性证据；后续批次
+3 台设备时 SNMP 为 2/2。
+
+### 12.2 VLAN 试点 1：暴露证据选择与评分缺陷
+
+```text
+故障点:      BR-A-SW2 Ethernet1/0
+变更:        switchport access vlan 10 -> 20
+故障批次:    run_6583d2bfc6dc4397a1e50461b9ace7c4
+故障连通性:  0/1
+实验:        experiment_ce80695d0b9549ea98f051b560acb113
+诊断:        diagnosis_id 5（有 KB）/ 6（无 KB）
+恢复批次:    run_5f6bb329c6dd41a19e320bf0f8d2fdb5（1/1）
+```
+
+第一次试点最初被旧评分判为 `correct`，但人工复核发现这是**误判**：
+
+- `show vlan brief` 证据里虽然有 `VLAN 20`，但当时的证据选择把默认/unsupported
+  VLAN 排在了前面，实际没有把 `VLAN 20: Ethernet1/0` 送进模型上下文；
+- 两条回答把根因归到 `preauth_ipv4_acl`、trunk、VLAN 间路由，均未点名
+  `Ethernet1/0` / `Et1/0`；
+- 旧评分只要求命中 `VLAN` 和 `20`，条件过弱。
+
+已做两项修复：
+
+1. `rag_engine/evidence_builder.py`：active 且带端口的非默认 VLAN 优先级最高，
+   默认 VLAN 与 `act/unsup` VLAN 降级；新增回归测试
+   `tests/test_evidence_selection.py::test_active_vlan_with_port_beats_default_and_unsupported_vlans`。
+2. `test_cases/real_evaluation.py`：实验结果持久化 `evidence_run_id`；VLAN 试点评分增加
+   `must_mention_any: ["Ethernet1/0", "Et1/0", "Ethernet 1/0"]`。
+
+旧实验结果已用 `scripts/rescore_experiment.py` 按加强后的标准重算：
+
+```text
+experiment_ce80695d0b9549ea98f051b560acb113
+diagnosis 5: correct -> wrong（缺 Ethernet1/0 / Et1/0）
+diagnosis 6: correct -> wrong（缺 Ethernet1/0 / Et1/0）
+```
+
+原始分数保留在 `experiment_results.evaluation_json.rescore_history`，并写入
+`audit_log`（`evaluation.experiment.rescored`），没有删除原始回答或证据。
+
+### 12.3 VLAN 试点 2：修复后真实通过
+
+```text
+故障点:      BR-A-SW2 Ethernet1/0
+变更:        switchport access vlan 10 -> 20（人工确认 + 备份）
+注入备份:    reports/backups/BR-A-SW2_20261109_152927.cfg
+故障批次:    run_cc8b71d38688498fb7ecee4cbf5945a8
+故障连通性:  0/1
+实验:        experiment_e28f65065b0242209a32886749a11dee
+诊断:        diagnosis_id 7（有 KB）/ 8（无 KB）
+评分:        两条均 correct；命中 VLAN、20、Ethernet1/0、Et1/0
+恢复批次:    run_b92a14f6564c458fbfdb83988b9becec（1/1）
+恢复备份:    reports/backups/BR-A-SW2_20261109_153125.cfg
+人工记录:    manual_actions.id=4（status=completed）
+最终配置:    Ethernet1/0 access VLAN 10
+最终复测:    HQ-R1 -> 10.20.10.11 100%
+报告:        reports/diagnosis_7.md、reports/diagnosis_7.html
+```
+
+本次证据中已明确包含：
+
+```text
+BR-A-SW2 VLAN 20: name=VLAN0020, status=active, ports=Ethernet1/0
+```
+
+### 12.4 当前计数（2026-11-09 审计）
+
+| 项目 | 2026-11-01 | 2026-11-09 |
+|---|---:|---:|
+| 采集批次 | 4 | 9 |
+| 状态观测 | 1014 | 2056 |
+| 模型调用 | 4 | 8 |
+| 诊断记录 | 4 | 8 |
+| 评测实验 | 1 | 3 |
+| 评测结果 | 2 | 6 |
+| 测试用例 | 1 | 3 |
+| 真实故障注入 | 0 | 2 |
+| 人工处理记录 | 2 | 4 |
+
+### 12.5 当前审计结果
+
+```text
+PASS：N1–N4 设备/角色数量
+PASS：C1–C7 采集、观测、SSH 100%、连通性、时效
+PASS：K1–K3 知识库 26 篇、5 类覆盖、元数据完整
+WARN：K4 source_url 0/26
+PASS：L1–L5 模型调用/诊断/检索/上下文/Prompt
+PASS：E1 评测实验 3
+FAIL：E2 评测结果 6/20
+FAIL：E3 测试用例 3/10
+FAIL：E4 真实故障注入 2/8
+WARN：O1 变更单 0
+PASS：O2–O3、P1–P3
+```
+
+### 12.6 仍未完成
+
+- 需求 7 仍差：链路 ×2、VLAN 独立第 2 例、默认路由 ×2、ACL ×2、正常 1、
+  证据不足 1；20 条可查询结果尚未达到；
+- `source_url` 仍为 0/26；
+- 正式 `change_requests` 仍为 0；
+- SNMP 在部分批次会超时，需要继续观察；
+- 除 2026-11-09 的 `REAL_VLAN_02` 外，其余真实故障类型仍需继续做受控注入与复测。
+
+*本节为 2026-11-09 增量核验；所有故障注入、恢复和复测均基于 EVE-NG 真实设备，
+`data/ops.db` 为本地运行产物。*
+
+---
+
+## 13. 2026-11-09 续：真实 4 类故障 campaign 完成
+
+本节是第 12 节之后的同日增量。第 12 节记录的是 VLAN 试点完成时的中间状态；
+本节记录其余故障类型和最终审计结果。
+
+### 13.1 新增真实故障与用例
+
+| 用例 | 类别 | 真实操作 | 故障批次 | 恢复/复测 |
+|---|---|---|---|---|
+| `REAL_LINK_01` | link_down | BR-A-R2 `Ethernet0/0` shutdown | `run_4568cd899bed46eea4b271abfae6b19a`（0/1） | `run_33c7785eb7344704a3a34b646451a66b`（1/1） |
+| `REAL_LINK_02` | link_down | BR-B-R3 `Ethernet0/0` shutdown | `run_496017804388410fa7c78f3d4ec74ed8`（0/1） | `run_0037d981ea8346c58c93b1a1ac37d49b`（1/1） |
+| `REAL_DEFAULT_ROUTE_01` | default_route_missing | BR-A-R2 删除 `ip route 0.0.0.0 0.0.0.0 172.16.1.1` | `run_d8a0fde403ae48e08187ba2391c7e745` | `run_3b391eba46404e1796a2c9331b41f7ae`（1/1） |
+| `REAL_DEFAULT_ROUTE_02` | default_route_missing | BR-B-R3 删除 `ip route 0.0.0.0 0.0.0.0 172.16.2.1` | `run_aa0217f8e3eb40c18b0f8c9fb20ecbc8` | `run_8122de61810d424bb6d30582ed929708`（1/1） |
+| `REAL_ACL_01` | acl_overblock | HQ-R1 `Ethernet1/0` 用 `PILOT-BLOCK-A` deny `10.20.10.0/24 -> 10.10.10.0/24` | `run_4fd27433270f45188d4c42956bc62b7b` | `run_fd0ab594713a4d9197464536ee70c7b3`（1/1） |
+| `REAL_ACL_02` | acl_overblock | HQ-R1 `Ethernet2/0` 用 `PILOT-BLOCK-B` deny `10.30.10.0/24 -> 10.10.10.0/24` | `run_016e70aa797a406883a6b1f4047e552e` | `run_1719e1ba58694d71b8ce63862f94206e`（1/1） |
+| `REAL_NORMAL_02` | normal | 全量恢复后重新采集（9 台设备） | `run_1e40e02dcb054462a520666cb8b5fbf7` | SSH 39/0、SNMP 6/6、连通性 3/3 |
+| `REAL_INSUFFICIENT_01` | insufficient_evidence | 创建故意跳过 BR-B-SW3 的真实采集批次 | `run_1f151d92a38a4967b90d10904dd9dd19` | 随后 `run_c39489b83b664cdea85372a8cd3ca8b7` 全量刷新 |
+
+所有写操作均通过审计终端：先备份、再一次性确认令牌、再下发；脚本 `finally`
+中强制恢复。链路/路由/ACL 的最终状态均已复核：
+
+```text
+BR-A-R2 Ethernet0/0                up/up
+BR-B-R3 Ethernet0/0                up/up
+BR-A-R2 0.0.0.0/0 via 172.16.1.1   存在
+BR-B-R3 0.0.0.0/0 via 172.16.2.1   存在
+HQ-R1 Ethernet1/0                  ip access-group WAN-IN in
+HQ-R1 Ethernet2/0                  ip access-group WAN-IN in
+VLAN 试点端口 BR-A-SW2 Ethernet1/0   access vlan 10
+最终全量批次                       9 设备、SSH 39/0、SNMP 6/6、连通性 3/3
+```
+
+### 13.2 campaign 中发现并修复的质量问题
+
+1. **设备提取器在问题含 IP 时丢失站点上下文**
+   - ACL 问题包含 `10.10.10.100`，提取器只返回 `HQ-SRV`，没有返回 `HQ-R1`
+     和分支设备，导致模型看不到故障 ACL；
+   - 修复：有精确设备/IP 命中且问题同时包含站点关键词时，合并站点设备；
+     匹配站点前先剥离设备名，避免 `HQ` 误匹配 `HQ-R1`；
+   - 测试：`tests/test_device_extractor.py::test_ip_plus_site_keyword_expands_to_site_devices`。
+
+2. **ACL 证据被交换机 ACL 挤出全局证据上限**
+   - 原来全局最多 30 条，先填充的分支设备占满预算，HQ-R1 的真实故障 ACL
+     没有进入上下文，模型误判为 BR-A-SW2 的 `preauth_ipv4_acl`；
+   - 修复：`MAX_EVIDENCE_ITEMS` 30 -> 36，并按设备数公平分配每设备上限，
+     让后出现的 HQ 路由器也能保留路由 + ACL；
+   - 测试：`tests/test_evidence_selection.py::test_acl_from_later_device_survives_compact_evidence`。
+
+3. **链路用例 2 的期望设备写成了 BR-A-R2**
+   - 实际故障设备是 BR-B-R3；已用 `scripts/rescore_experiment.py
+     --replace-must-mention BR-A-R2=BR-B-R3` 更正并保留原始分数。
+
+4. **证据不足用例 v1 使用了 `single` 结果**
+   - `get_current_device_bundle` 优先取最新 `full` 结果，v1 的跳过记录被旧数据
+     覆盖，模型因此“正常”作答；
+   - v2 改为发布 `full` 类型的 skipped 结果，证据才真正缺失；
+   - v1（`experiment_de93e145c5a04fa7a1dcdde353b173ac`）保留为失败尝试，
+     **不应作为有效证据不足结果**；有效结果是
+     `experiment_10b79c6cd62e405eafcc917b195ceb02`。
+
+5. **VLAN 试点 1 的旧评分过弱**
+   - 见第 12.2 节：证据优先级修复后，诊断 5/6 已从 `correct` 更正为 `wrong`，
+     原始分数保存在 `evaluation_json.rescore_history`。
+
+### 13.3 有效 campaign 指标
+
+有效 campaign 每个用例取最终一次实验（排除历史 stale 负向控制
+`REAL_NORMAL_01` 和已被修复替代的 ACL/证据不足早期尝试）：
+
+| 用例 | 有 KB | 无 KB |
+|---|---|---|
+| `REAL_VLAN_01` | wrong | wrong |
+| `REAL_VLAN_02` | correct | correct |
+| `REAL_DEFAULT_ROUTE_01` | correct | partial |
+| `REAL_DEFAULT_ROUTE_02` | partial | partial |
+| `REAL_LINK_01` | correct | correct |
+| `REAL_LINK_02` | correct | correct |
+| `REAL_ACL_01` | correct | correct |
+| `REAL_ACL_02` | correct | correct |
+| `REAL_NORMAL_02` | correct | correct |
+| `REAL_INSUFFICIENT_01` | correct | correct |
+| **汇总** | **8C/1P/1W，准确率 85.0%，可执行性 0.875** | **7C/2P/1W，准确率 80.0%，可执行性 1.000** |
+
+对应有效实验 ID：
+
+```text
+experiment_ce80695d0b9549ea98f051b560acb113  REAL_VLAN_01
+experiment_e28f65065b0242209a32886749a11dee  REAL_VLAN_02
+experiment_c4f265c5e6674575ae424d45a4b14157  REAL_DEFAULT_ROUTE_01
+experiment_1e7ca7555ced49a6b2f4ea12ed3acf19  REAL_DEFAULT_ROUTE_02
+experiment_f584ab53fe954f18810f04f6e50dc51a  REAL_LINK_01
+experiment_15b9f6a14328471bac4a88b9bb7be8d8  REAL_LINK_02
+experiment_a62df22270e549e4a0b6e0a12782a9ac  REAL_ACL_01（修复后最终）
+experiment_cbdfbdf7289e425da75eda95cb88b7b1  REAL_ACL_02
+experiment_63a00fa652984d0789473ff79025fc84  REAL_NORMAL_02
+experiment_10b79c6cd62e405eafcc917b195ceb02  REAL_INSUFFICIENT_01（v2）
+```
+
+`REAL_VLAN_01` 的 `wrong` 是真实历史结果：它暴露了 VLAN 证据优先级缺陷；
+同一故障类型在修复后的 `REAL_VLAN_02` 已 `correct`。保留该结果比删除更可审计。
+
+### 13.4 当前计数与审计
+
+| 项目 | 2026-11-09 中间态（第 12 节） | 2026-11-09 最终 |
+|---|---:|---:|
+| 采集批次 | 9 | 29 |
+| 状态观测 | 2056 | 6467 |
+| 模型调用 | 8 | 30 |
+| 诊断记录 | 8 | 30 |
+| 评测实验 | 3 | 14 |
+| 评测结果 | 6 | 28 |
+| 测试用例 | 3 | 11 |
+| 真实故障注入 | 2 | 10 |
+| 人工处理记录 | 4 | 12 |
+
+只读审计最终结果：
+
+```text
+PASS：N1–N4、C1–C7、K1–K3、L1–L5
+PASS：E1 实验 14、E2 结果 28、E3 用例 11、E4 真实故障注入 10
+PASS：O2–O3、P1–P3
+WARN：K4 source_url 0/26
+WARN：O1 正式变更单 0（P5 可豁免）
+```
+
+### 13.5 仍未关闭的事项
+
+- **K4**：26 篇知识文章仍无 `source_url`；这是知识库来源可核验性的缺口；
+- **O1**：仍无正式 `change_requests` 单据；真实变更通过审计终端 + 备份 +
+  人工处理记录留痕，但未走独立变更单流程；
+- **历史失败实验**：VLAN 试点 1、ACL 试点前两次、证据不足 v1 保留为失败/修复
+  过程记录，不计入有效 campaign 指标；
+- **SNMP 稳定性**：最终两次全量采集均为 6/6，但此前出现过 3/6 超时，仍需观察；
+- **VLAN 类别**：`REAL_VLAN_01` 仍为 `wrong`（真实结果），如需提高该类准确率，
+  可在后续用相同故障类型再做一个独立用例，而不是修改历史分数。
+
+### 13.6 结论更新
+
+第 12.6 节“需求 7 仍差链路 ×2、默认路由 ×2、ACL ×2、正常、证据不足”的判断
+**已被本节取代**：截至 2026-11-09，上述真实故障类型均已在 EVE-NG 上完成注入、
+采集、有/无知识库诊断、恢复和复测，并落库到 `data/ops.db`。
+
+需求 7 的“10 个用例 / 20 条结果 / 4 类各 2 例”硬指标已满足；剩余 WARN 是
+知识库来源 URL 和正式变更单，不再是真实故障 campaign 的缺口。
+
+*本节为 2026-11-09 最终增量核验；所有数字来自 `data/ops.db` 的只读查询和
+`scripts/verify_acceptance.py` 输出。*

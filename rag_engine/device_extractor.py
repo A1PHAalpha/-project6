@@ -56,22 +56,30 @@ def extract_relevant_devices(question: str) -> list:
         if _contains_device_name(question, device.get("device_name") or "")
         or _contains_ip(question, device.get("mgmt_ip") or "")
     ]
-    if exact_matches:
-        return list(dict.fromkeys(exact_matches))
 
     q = question.lower()
+    site_question = q
+    for name in exact_matches:
+        site_question = site_question.replace(name.lower(), " ")
     matched_sites = [
         site
         for site, keywords in SITE_KEYWORDS.items()
-        if any(keyword.lower() in q for keyword in keywords)
+        if any(keyword.lower() in site_question for keyword in keywords)
     ]
-    if matched_sites:
-        site_devices = [
-            device["device_name"]
-            for device in devices
-            if device.get("site") in matched_sites
-        ]
-        if site_devices:
-            return site_devices
+    site_devices = [
+        device["device_name"]
+        for device in devices
+        if device.get("site") in matched_sites
+    ]
+
+    if exact_matches:
+        # An IP or device name alone can be too narrow: "分支A ... 10.10.10.100"
+        # names HQ-SRV by IP but also implicates branch A and the HQ path. Keep
+        # exact matches and add site devices when the question names a site.
+        combined = list(dict.fromkeys([*exact_matches, *site_devices]))
+        return combined
+
+    if matched_sites and site_devices:
+        return site_devices
 
     return [device["device_name"] for device in devices]

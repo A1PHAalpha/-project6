@@ -38,3 +38,14 @@ def test_device_name_is_case_insensitive():
 
 def test_management_ip_matches_device():
     assert extract_relevant_devices("192.168.249.11 的接口状态") == ["HQ-R1"]
+
+
+def test_ip_plus_site_keyword_expands_to_site_devices():
+    names = extract_relevant_devices(
+        "分支A终端访问总部服务器 10.10.10.100 突然不通了，怀疑是 ACL 改动"
+    )
+    assert "HQ-SRV" in names
+    assert "BR-A-R2" in names
+    assert "BR-A-SW2" in names
+    assert "BR-A-PC" in names
+    assert "HQ-R1" in names

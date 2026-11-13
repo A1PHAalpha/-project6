@@ -13,7 +13,10 @@ from collector import db
 
 EVIDENCE_STALE_MINUTES = 30
 MAX_OBSERVATIONS_PER_DEVICE = 80
-MAX_EVIDENCE_ITEMS = 30
+# 36 lets a six-device branch/HQ question keep ~6 facts per device, which is
+# enough for routes *and* the ACLs that explain an overblock. A 30-item cap
+# previously let the first devices consume the budget before HQ-R1's ACL.
+MAX_EVIDENCE_ITEMS = 36
 MAX_EVIDENCE_PER_DEVICE = 12
 
 _FAULT_STATE_PRIORITY = {
@@ -102,6 +105,18 @@ def _observation_priority(observation: dict) -> int:
         if protocol in ("C", "L"):
             return 1
         return 3
+    if state_type == "vlan":
+        status = str(payload.get("status") or "").lower()
+        ports = payload.get("ports") or []
+        vlan_id = str(payload.get("vlan_id") or "")
+        if status == "active" and ports and vlan_id != "1":
+            return 0
+        if status == "active" and vlan_id != "1":
+            return 1
+        if status == "active":
+            # Default VLAN is noisy and usually not the fault VLAN.
+            return 5
+        return 8
     return _FAULT_STATE_PRIORITY.get(state_type, 10)
 
 
@@ -146,7 +161,14 @@ def select_compact_evidence(
             order.append(device_name)
         buckets[device_name].append(item)
 
-    per_device_limit = MAX_EVIDENCE_PER_DEVICE if len(order) > 1 else limit
+    if len(order) > 1:
+        # Fair share so late devices (often the HQ router holding the fault ACL)
+        # are not squeezed out by the first branch devices.
+        per_device_limit = max(
+            4, min(MAX_EVIDENCE_PER_DEVICE, limit // len(order))
+        )
+    else:
+        per_device_limit = limit
     for device_name in order:
         buckets[device_name] = _diversify_bucket(buckets[device_name])
 
