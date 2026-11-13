@@ -2,6 +2,13 @@
 
 评分只依赖本次模型回答和预先声明的期望要点，不把答案写回知识库，
 也不会把测试问题或标准答案作为检索资料。
+
+两套期望词并存，因为对应的证据世界不同：
+
+* ``EXPECTED_BY_ID`` 描述 ``test_cases.scenarios`` 里的合成场景
+  （历史 192.168.100.x / Gi0/x 实验拓扑）。
+* ``LIVE_EXPECTED_BY_ID`` 描述 ``scripts.live_fault_experiments`` 在 EVE-NG
+  真机拓扑（10.10/10.20/10.30 网段、Ethernet0/x 接口名）上注入的案例。
 """
 from __future__ import annotations
 
@@ -98,6 +105,101 @@ def expected_for_scenario(scenario: dict) -> dict:
     expected.update(EXPECTED_BY_ID.get(scenario["id"], {}))
     expected["category"] = scenario["category"]
     expected["expected_notes"] = scenario.get("expected_notes", "")
+    return expected
+
+
+# EVE-NG 真机拓扑（docs/TEST_RUNBOOK.md §1.2）下的故障案例期望词。
+# 接口名统一成 Ethernet0/x，网段统一成 10.10.10.0/24（总部服务器）、
+# 10.20.10.0/24（分支A终端）、10.30.10.0/24（分支B终端）。
+LIVE_EXPECTED_BY_ID: dict[str, dict[str, Any]] = {
+    "LINK-1": {
+        "must_mention": ["链路", "down", "Ethernet0/0"],
+        "expected_devices": ["BR-A-R2", "BR-A-SW2"],
+        "forbidden": ["VLAN 20 是唯一原因"],
+        "require_recheck": True,
+    },
+    "LINK-2": {
+        "must_mention": ["链路", "down", "Ethernet0/0"],
+        "expected_devices": ["BR-B-R3", "BR-B-SW3"],
+        "forbidden": ["ACL 是唯一原因"],
+        "require_recheck": True,
+    },
+    "VLAN-1": {
+        "must_mention": ["VLAN", "20", "Ethernet1/0"],
+        "expected_devices": ["BR-A-SW2"],
+        "forbidden": ["默认路由缺失是根因"],
+        "require_recheck": True,
+    },
+    "VLAN-2": {
+        "must_mention": ["trunk", "VLAN 10"],
+        "expected_devices": ["BR-A-SW2"],
+        "forbidden": ["ACL 是唯一原因"],
+        "require_recheck": True,
+    },
+    "ROUTE-1": {
+        "must_mention": ["默认路由", "0.0.0.0/0"],
+        "expected_devices": ["BR-B-R3"],
+        "forbidden": ["VLAN 配置错误是根因"],
+        "require_recheck": True,
+    },
+    "ROUTE-2": {
+        "must_mention": ["默认路由", "0.0.0.0/0"],
+        "expected_devices": ["BR-A-R2"],
+        "forbidden": ["OSPF 邻居故障是唯一根因"],
+        "require_recheck": True,
+    },
+    "ACL-1": {
+        "must_mention": ["ACL", "deny", "10.20.10.0"],
+        "expected_devices": ["HQ-R1"],
+        "forbidden": ["默认路由缺失是根因"],
+        "require_recheck": True,
+    },
+    "ACL-2": {
+        "must_mention": ["ACL", "deny", "10.20.10.0"],
+        "expected_devices": ["BR-A-R2"],
+        "forbidden": ["VLAN 10 未放通是唯一原因"],
+        "require_recheck": True,
+    },
+    "NORMAL-1": {
+        "must_mention": [],
+        "must_mention_any": ["正常", "无故障", "未发现异常", "未发现故障"],
+        "expected_devices": ["HQ-R1"],
+        "forbidden": ["链路中断", "默认路由缺失", "ACL 误拦截"],
+        "require_recheck": False,
+        "expect_no_change": True,
+    },
+    "INSUFFICIENT-1": {
+        "must_mention": ["BR-B-SW3"],
+        "must_mention_any": [
+            "缺少",
+            "无任何采集数据",
+            "无采集数据",
+            "无法判断",
+            "无法确认",
+            "证据不足",
+        ],
+        "expected_devices": ["BR-B-SW3"],
+        "forbidden": ["端口已经关闭", "shutdown 已执行"],
+        "require_recheck": True,
+        "insufficient": True,
+    },
+}
+
+
+def expected_for_live_case(case_id: str) -> dict:
+    """返回真机故障案例的期望结构，未登记的案例直接报错而不是静默降级。"""
+    if case_id not in LIVE_EXPECTED_BY_ID:
+        raise KeyError(f"未登记的真机案例: {case_id}")
+    expected = {
+        "must_mention": [],
+        "must_mention_any": [],
+        "expected_devices": [],
+        "forbidden": [],
+        "require_recheck": True,
+        "expect_no_change": False,
+        "insufficient": False,
+    }
+    expected.update(LIVE_EXPECTED_BY_ID[case_id])
     return expected
 
 
